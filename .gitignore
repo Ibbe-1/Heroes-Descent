@@ -364,3 +364,8 @@ FodyWeavers.xsd
 
 # Vite / React build output
 frontend/dist/
+
+# SQLite database — each machine generates their own
+*.db
+*.db-shm
+*.db-wal
