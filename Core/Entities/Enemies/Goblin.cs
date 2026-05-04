@@ -7,6 +7,7 @@ public class Goblin : Enemy
     public Goblin()
     {
         Name = "Goblin";
+        MovementSpeed = 100f;
         MaxHealth = 40;
         Health = MaxHealth;
         Attack = 10;

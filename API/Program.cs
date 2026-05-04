@@ -1,6 +1,7 @@
 // Entry point — bootstraps ASP.NET Core and wires up all services.
 
 using Heroes_Descent.API.Hubs;
+using Heroes_Descent.Application.Services;
 using Heroes_Descent.Core.Entities;
 using Heroes_Descent.Core.Interfaces;
 using Heroes_Descent.Infrastructure;
@@ -74,7 +75,10 @@ builder.Services.AddCors(options =>
 });
 
 builder.Services.AddSingleton<IGameLogger, GameLogger>();
-// TODO: register Application services here (e.g. builder.Services.AddScoped<IGameSessionService, GameSessionService>())
+builder.Services.AddSingleton<DungeonGenerator>();
+builder.Services.AddSingleton<SessionManager>();
+builder.Services.AddSingleton<GameService>();
+builder.Services.AddHostedService<EnemyAiService>();
 
 var app = builder.Build();
 

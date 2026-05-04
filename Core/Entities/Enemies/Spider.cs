@@ -7,6 +7,7 @@ public class Spider : Enemy
     public Spider()
     {
         Name = "Spider";
+        MovementSpeed = 120f;
         MaxHealth = 30;
         Health = MaxHealth;
         Attack = 8;
