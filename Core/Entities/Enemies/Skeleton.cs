@@ -1,4 +1,4 @@
-namespace HeroesDescent.Core.Entities;
+namespace Heroes_Descent.Core.Entities.Enemies;
 
 public class Skeleton : Enemy
 {
@@ -14,7 +14,6 @@ public class Skeleton : Enemy
 
     public override int TakeDamage(int incomingDamage)
     {
-        // Skeletons resist physical damage
         int reducedDamage = (int)(incomingDamage * 0.75);
         return base.TakeDamage(reducedDamage);
     }

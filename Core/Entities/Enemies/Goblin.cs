@@ -1,4 +1,4 @@
-namespace HeroesDescent.Core.Entities;
+namespace Heroes_Descent.Core.Entities.Enemies;
 
 public class Goblin : Enemy
 {
