@@ -1,9 +1,30 @@
+// GamePage.tsx — the main React component that manages the entire game flow.
+//
+// It has three phases:
+//   'hero-select'  → the player picks a class and creates or joins a session.
+//   'connecting'   → the SignalR WebSocket is being established.
+//   'playing'      → the Phaser canvas is mounted alongside the React HUD overlay.
+//
+// React is responsible for:
+//   - The hero select screen (class cards, buttons, join input).
+//   - The HUD overlay (party stats, combat log, ability button, advance button).
+//   - Owning the SignalR connection via GameEngine.
+//
+// Phaser is responsible for:
+//   - Rendering the dungeon room, sprites, HP bars, and animations.
+//   - Reading WASD/SPACE/Q input at 60fps and sending position to the server.
+//
+// The two systems communicate through the Phaser event bus:
+//   React → Phaser: gameRef.current.events.emit('stateUpdate', state)
+//   Phaser → React: nothing — Phaser only reads from the bus, never writes back to React.
+
 import { useState, useEffect, useRef } from 'react';
 import Phaser from 'phaser';
 import { GameScene } from '../game/GameScene';
 import { GameEngine } from '../game/gameEngine';
 import type { GameState, HeroClass, PlayerState } from '../types/gameTypes';
 
+// Shared style constants so we don't repeat hex strings everywhere.
 const F = "'Courier New', Courier, monospace";
 const GOLD = '#c9a84c';
 const GOLD_DIM = 'rgba(201,168,76,0.4)';
@@ -12,18 +33,27 @@ const RED = '#c0392b';
 const GRAY = '#555';
 const WHITE = '#e8e8e8';
 
+// Static hero stats displayed on the hero selection cards.
+// These mirror the values the server uses but are only for display — the server
+// is the authoritative source for all in-game numbers.
 const HERO_INFO: Record<HeroClass, { icon: string; hp: number; atk: number; def: number; spd: number; ability: string; tip: string }> = {
   Warrior: { icon: '⚔', hp: 120, atk: 25, def: 10, spd: 7,  ability: 'Shield Block', tip: 'Next hit halved. Gains Rage on damage.' },
   Wizard:  { icon: '🔥', hp: 60,  atk: 10, def: 3,  spd: 10, ability: 'Fireball',    tip: 'Blasts all enemies in the room.' },
   Archer:  { icon: '🏹', hp: 85,  atk: 18, def: 6,  spd: 14, ability: 'Multi-Shot',  tip: 'Fires at 2 targets. High crit chance.' },
 };
 
+// Each hero class uses a different resource bar color so players can recognize
+// them at a glance without reading the label.
 function resourceColor(name: string) {
   if (name === 'Mana') return '#2980b9';
   if (name === 'Rage') return '#e67e22';
-  return '#27ae60';
+  return '#27ae60';  // Energy (Archer)
 }
 
+// ── Reusable sub-components ───────────────────────────────────────────────────
+
+// A thin colored progress bar used for both HP and resource displays.
+// val/max are numbers; color is a CSS color string.
 function MiniBar({ val, max, color }: { val: number; max: number; color: string }) {
   const pct = max > 0 ? Math.max(0, Math.min(100, (val / max) * 100)) : 0;
   return (
@@ -33,6 +63,8 @@ function MiniBar({ val, max, color }: { val: number; max: number; color: string 
   );
 }
 
+// One card in the bottom party bar showing a single player's status.
+// isMe highlights the local player's card in gold so it stands out.
 function PlayerHud({ p, isMe }: { p: PlayerState; isMe: boolean }) {
   const rc = resourceColor(p.resourceName);
   return (
@@ -43,7 +75,7 @@ function PlayerHud({ p, isMe }: { p: PlayerState; isMe: boolean }) {
       border: `1px solid ${isMe ? GOLD_DIM : 'rgba(255,255,255,0.06)'}`,
       borderRadius: 2,
       minWidth: 140, maxWidth: 200,
-      opacity: p.isAlive ? 1 : 0.4,
+      opacity: p.isAlive ? 1 : 0.4,  // dim dead players
       fontFamily: F,
     }}>
       <div style={{ fontSize: 10, color: isMe ? GOLD : WHITE, letterSpacing: '0.05em' }}>
@@ -64,6 +96,8 @@ function PlayerHud({ p, isMe }: { p: PlayerState; isMe: boolean }) {
   );
 }
 
+// ── Main component ────────────────────────────────────────────────────────────
+
 type Phase = 'hero-select' | 'connecting' | 'playing';
 
 interface Props { username: string; userId: string; onBack: () => void; }
@@ -75,68 +109,93 @@ export default function GamePage({ username, userId, onBack }: Props) {
   const [joinError, setJoinError]     = useState('');
   const [connectError, setConnectError] = useState('');
   const [sessionCode, setSessionCode] = useState('');
+
+  // gameState is set by GameEngine.onStateUpdate every time the server pushes
+  // a new GameStateUpdate message. React re-renders the HUD with the new data,
+  // and a separate useEffect forwards the state into the Phaser scene.
   const [gameState, setGameState]     = useState<GameState | null>(null);
 
+  // Refs hold the Phaser game instance and the SignalR engine so they persist
+  // across re-renders without triggering extra effects.
   const containerRef = useRef<HTMLDivElement>(null);
   const gameRef      = useRef<Phaser.Game | null>(null);
   const engineRef    = useRef<GameEngine | null>(null);
 
-  // Mount Phaser when entering 'playing' phase
+  // ── Effect: mount Phaser when entering the 'playing' phase ───────────────
+
+  // useEffect runs after the DOM is ready, so containerRef.current is guaranteed
+  // to exist by the time we create the Phaser game.
   useEffect(() => {
     if (phase !== 'playing' || !containerRef.current) return;
 
     const config: Phaser.Types.Core.GameConfig = {
-      type: Phaser.AUTO,
+      type: Phaser.AUTO,    // auto-selects WebGL if available, else Canvas
       backgroundColor: '#07070d',
       scene: [GameScene],
-      parent: containerRef.current,
+      parent: containerRef.current,  // mounts the <canvas> inside our div
       scale: {
+        // FIT scales the fixed 960×640 canvas to fill the available space
+        // while preserving the aspect ratio. This keeps pixel positions consistent
+        // regardless of the browser window size.
         mode: Phaser.Scale.FIT,
         autoCenter: Phaser.Scale.CENTER_BOTH,
         width: 960,
         height: 640,
       },
-      render: { antialias: false },
+      render: { antialias: false },  // pixel-art style — sharp edges
     };
 
     const game = new Phaser.Game(config);
     gameRef.current = game;
 
+    // Pass the engine and player identity into the Phaser scene.
+    // We use the event bus rather than constructor arguments because the scene
+    // is instantiated internally by Phaser and we can't pass props directly.
     const send = () => {
       game.events.emit('setEngine', engineRef.current);
       game.events.emit('setUserId', userId);
       game.events.emit('setUsername', username);
     };
 
-    // Scene may not be ready yet — wait for it
+    // 'ready' fires when Phaser finishes its own initialization.
+    // The setTimeout is a fallback in case 'ready' already fired before we could listen.
     game.events.once('ready', send);
-    // Also try immediately in case ready already fired
     setTimeout(send, 100);
 
+    // Destroy the Phaser game when the component unmounts or phase changes away.
+    // true = also remove the <canvas> element from the DOM.
     return () => {
       game.destroy(true);
       gameRef.current = null;
     };
   }, [phase]);
 
-  // Forward state updates into Phaser
+  // ── Effect: forward server state into Phaser ──────────────────────────────
+
+  // Whenever React receives a new GameState from the server, push it into Phaser
+  // via the event bus. Phaser's applyState() will sync all sprites accordingly.
   useEffect(() => {
     if (gameState && gameRef.current) {
       gameRef.current.events.emit('stateUpdate', gameState);
     }
   }, [gameState]);
 
-  // Cleanup engine on unmount
+  // Disconnect SignalR when the component is removed from the React tree.
   useEffect(() => () => { engineRef.current?.disconnect(); }, []);
 
+  // ── Session management helpers ────────────────────────────────────────────
+
+  // Creates a new GameEngine, sets the state-update callback, and opens the
+  // WebSocket connection. Awaited before calling createSession / joinSession.
   async function startEngine() {
     const engine = new GameEngine();
-    engine.onStateUpdate = setGameState;
+    engine.onStateUpdate = setGameState;  // wire state updates to React state
     engineRef.current = engine;
     await engine.connect();
     return engine;
   }
 
+  // Called when the player clicks "Create Dungeon".
   async function handleCreate() {
     setConnectError('');
     setPhase('connecting');
@@ -151,6 +210,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
     }
   }
 
+  // Called when the player clicks "Join" with a 6-char session code.
   async function handleJoin() {
     const code = joinCode.trim().toUpperCase();
     if (!code) { setJoinError('Enter a session code.'); return; }
@@ -168,6 +228,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
     }
   }
 
+  // Disconnects SignalR and returns to the hero select screen.
   function handleLeave() {
     engineRef.current?.disconnect();
     engineRef.current = null;
@@ -177,6 +238,11 @@ export default function GamePage({ username, userId, onBack }: Props) {
   }
 
   // ── Playing phase ─────────────────────────────────────────────────────────
+
+  // When playing, the layout is:
+  //   [Top bar]   — room info, session code, leave button
+  //   [Phaser canvas]
+  //   [Bottom HUD] — party cards, controls hint, ability button, log
   if (phase === 'playing') {
     const state = gameState;
     const me = state?.players.find(p => p.userId === userId);
@@ -189,11 +255,12 @@ export default function GamePage({ username, userId, onBack }: Props) {
     return (
       <div style={{ width: '100vw', height: '100vh', background: BG, position: 'relative', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
 
-        {/* Top bar */}
+        {/* Top bar: shows current room type/number, the 6-char code for friends to join, and a leave button. */}
         <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 12px', background: 'rgba(0,0,0,0.7)', borderBottom: `1px solid ${GOLD_DIM}`, fontFamily: F, fontSize: 11, color: GOLD, zIndex: 10 }}>
           <span>
             {state && (
               <>
+                {/* Color-coded room type label */}
                 <span style={{ color: room?.type === 'Boss' ? RED : room?.type === 'Elite' ? '#f39c12' : GOLD }}>
                   {room?.type === 'Boss' ? '☠ BOSS' : room?.type === 'Elite' ? '★ ELITE' : '○ NORMAL'}
                 </span>
@@ -205,18 +272,19 @@ export default function GamePage({ username, userId, onBack }: Props) {
           <button onClick={handleLeave} style={{ background: 'transparent', border: 'none', color: GRAY, fontFamily: F, fontSize: 10, cursor: 'pointer' }}>[Leave]</button>
         </div>
 
-        {/* Phaser canvas container */}
+        {/* Phaser canvas mounts here. flex: 1 lets it expand to fill the space between
+            the top and bottom bars. minHeight: 0 prevents flexbox overflow. */}
         <div ref={containerRef} style={{ flex: 1, position: 'relative', minHeight: 0 }} />
 
-        {/* Bottom HUD */}
+        {/* Bottom HUD overlay — lives above the canvas via zIndex. */}
         <div style={{ flexShrink: 0, background: 'rgba(0,0,0,0.75)', borderTop: `1px solid ${GOLD_DIM}`, padding: '6px 12px', zIndex: 10, fontFamily: F }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
 
-            {/* Party stats */}
+            {/* Party status cards — one per player in the session. */}
             {me && <PlayerHud p={me} isMe />}
             {others.map(p => <PlayerHud key={p.userId} p={p} isMe={false} />)}
 
-            {/* Controls hint */}
+            {/* Controls hint and ability button */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 8, borderLeft: `1px solid rgba(255,255,255,0.07)` }}>
               <span style={{ fontSize: 9, color: GRAY }}>
                 <kbd style={{ color: WHITE }}>WASD</kbd> Move &nbsp;
@@ -225,7 +293,8 @@ export default function GamePage({ username, userId, onBack }: Props) {
                 {me && !me.canUseAbility && <span style={{ color: GRAY }}> (not ready)</span>}
               </span>
 
-              {/* Ability status */}
+              {/* Clickable ability button — mirrors the Q key for mouse users.
+                  Disabled when the hero's resource is too low (canUseAbility = false). */}
               {me && (
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                   <button
@@ -243,7 +312,12 @@ export default function GamePage({ username, userId, onBack }: Props) {
               )}
             </div>
 
-            {/* Advance / end-state buttons */}
+            {/* Right side: advance/end-state buttons.
+                Only one of these is visible at a time:
+                  Victory  → shown when isVictory is true
+                  Defeated → shown when isGameOver is true
+                  Next Room → shown when the current room is cleared but game isn't over
+                  "X enemies remaining" → shown while the room is still active */}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
               {isWin && (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
@@ -271,7 +345,9 @@ export default function GamePage({ username, userId, onBack }: Props) {
 
           </div>
 
-          {/* Combat log */}
+          {/* Combat log: last 4 lines from the server's RecentLog list.
+              Lines starting with '»' are room announcements (gold).
+              Lines mentioning defeat keywords are red. Everything else is grey. */}
           {state && state.log.length > 0 && (
             <div style={{ marginTop: 4, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 4, display: 'flex', flexDirection: 'column', gap: 1 }}>
               {state.log.slice(-4).map((line, i) => (
@@ -286,7 +362,9 @@ export default function GamePage({ username, userId, onBack }: Props) {
     );
   }
 
-  // ── Connecting ────────────────────────────────────────────────────────────
+  // ── Connecting phase ──────────────────────────────────────────────────────
+
+  // Simple loading screen shown while the SignalR handshake completes.
   if (phase === 'connecting') {
     return (
       <div style={{ minHeight: '100vh', background: BG, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -295,12 +373,16 @@ export default function GamePage({ username, userId, onBack }: Props) {
     );
   }
 
-  // ── Hero select ───────────────────────────────────────────────────────────
+  // ── Hero select phase ─────────────────────────────────────────────────────
+
+  // Three clickable class cards + "Create Dungeon" / "Join" buttons.
+  // The selected card is highlighted in gold; the others are dim.
   return (
     <div style={{ minHeight: '100vh', background: BG, color: GOLD, fontFamily: F, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem 1rem' }}>
       <h1 style={{ fontSize: '1rem', letterSpacing: '0.25em', textTransform: 'uppercase', margin: '0 0 0.3rem' }}>Heroes Descent</h1>
       <p style={{ color: GOLD_DIM, fontSize: '0.7rem', letterSpacing: '0.15em', margin: '0 0 2rem' }}>Choose your class</p>
 
+      {/* Hero class cards */}
       <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', flexWrap: 'wrap', justifyContent: 'center' }}>
         {(Object.keys(HERO_INFO) as HeroClass[]).map(cls => {
           const h = HERO_INFO[cls];
@@ -327,6 +409,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
 
       {connectError && <p style={{ color: RED, fontSize: '0.7rem', marginBottom: '0.8rem' }}>{connectError}</p>}
 
+      {/* Create / join actions */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem', alignItems: 'center', width: '100%', maxWidth: 380 }}>
         <button onClick={handleCreate} style={{ width: '100%', background: 'rgba(201,168,76,0.1)', border: `1px solid ${GOLD}`, color: GOLD, fontFamily: F, fontSize: '0.78rem', letterSpacing: '0.15em', textTransform: 'uppercase', padding: '0.65rem', cursor: 'pointer' }}>
           ▶ Create Dungeon
@@ -338,6 +421,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
           <div style={{ flex: 1, height: 1, background: GOLD_DIM }} />
         </div>
 
+        {/* Join by session code — automatically uppercased so capitalisation doesn't matter. */}
         <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
           <input
             placeholder="Session code (e.g. AB3K9Z)"
@@ -356,6 +440,8 @@ export default function GamePage({ username, userId, onBack }: Props) {
   );
 }
 
+// Returns a CSS style object for the advance/end-state buttons (Next Room, Victory, Defeated).
+// Extracted as a function so each button can pass its own color without duplicating styles.
 function advBtn(color: string): React.CSSProperties {
   return {
     background: 'transparent', border: `1px solid ${color}`, color,

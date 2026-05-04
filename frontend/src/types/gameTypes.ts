@@ -1,7 +1,17 @@
+// gameTypes.ts — TypeScript interfaces that mirror the C# DTOs from
+// Application/Dtos/GameStateDto.cs.
+//
+// Every time the server sends a "GameStateUpdate" SignalR message, the payload
+// matches the GameState interface below. The Phaser scene and React HUD both
+// read from this same object, so there's only one source of truth per frame.
+
 export type HeroClass = 'Warrior' | 'Wizard' | 'Archer';
 
+// One enemy currently in the room.
+// x / y are pixel coordinates in the 960 × 640 game canvas space —
+// the Phaser scene uses them to position the enemy's rectangle sprite.
 export interface EnemyState {
-  id: string;
+  id: string;         // unique per enemy instance, matched to Phaser sprites
   name: string;
   health: number;
   maxHealth: number;
@@ -13,9 +23,11 @@ export interface EnemyState {
 export interface RoomState {
   type: 'Normal' | 'Elite' | 'Boss';
   enemies: EnemyState[];
-  isCleared: boolean;
+  isCleared: boolean;  // true when every enemy is dead
 }
 
+// One player in the session, including all info needed to render their HUD card
+// and their sprite at the correct position.
 export interface PlayerState {
   userId: string;
   username: string;
@@ -23,23 +35,33 @@ export interface PlayerState {
   currentHp: number;
   maxHp: number;
   isAlive: boolean;
+
+  // Resource bar — covers all three classes:
+  //   Warrior → Rage, Wizard → Mana, Archer → Energy
   resource: number;
   maxResource: number;
   resourceName: string;
+
   canUseAbility: boolean;
   abilityName: string;
+
+  // How long (ms) the client should locally disable the attack button after pressing SPACE.
+  // Mirrors the server-side cooldown so the UI feels responsive without cheating.
   attackCooldownMs: number;
+
+  // World position — updated ~10 times per second via EnemyAiService broadcasts.
   x: number;
   y: number;
 }
 
+// The full game state sent to all clients after every significant event.
 export interface GameState {
   sessionId: string;
   currentRoomIndex: number;
   totalRooms: number;
   currentRoom: RoomState;
   players: PlayerState[];
-  log: string[];
+  log: string[];        // last 15 combat log lines
   isGameOver: boolean;
   isVictory: boolean;
 }
