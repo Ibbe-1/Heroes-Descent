@@ -30,9 +30,11 @@ export default function LoginPage({ onLogin, onNavigateRegister }: Props) {
 
   return (
     <div className={styles.container}>
+      <div className={styles.logoBanner}>
+        <img src="/logga.webp" className={styles.logo} alt="Heroes Descent" />
+      </div>
       <div className={styles.card}>
-        <h1 className={styles.title}>Heroes Descent</h1>
-        <h2 className={styles.subtitle}>Sign In</h2>
+        <h2 className={styles.subtitle}>— Sign In —</h2>
         <form onSubmit={handleSubmit} className={styles.form}>
           <label className={styles.label}>
             Email
@@ -58,7 +60,7 @@ export default function LoginPage({ onLogin, onNavigateRegister }: Props) {
           </label>
           {error && <p className={styles.error}>{error}</p>}
           <button className={styles.button} type="submit" disabled={loading}>
-            {loading ? 'Signing in…' : 'Enter the Descent'}
+            {loading ? 'Entering...' : '⚔ Enter the Descent ⚔'}
           </button>
         </form>
         <p className={styles.switch}>

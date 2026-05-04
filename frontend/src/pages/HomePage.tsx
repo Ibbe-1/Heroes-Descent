@@ -260,23 +260,40 @@ export default function HomePage({ username, onLogout, onPlay }: Props) {
         />
       )}
 
-      {/* Header — game title + animated welcome message + logout */}
+      {/* News ticker */}
+      <div className={styles.ticker}>
+        <span className={styles.tickerLabel}>⚔ NEWS ⚔</span>
+        <div className={styles.tickerTrack}>
+          <span className={styles.tickerContent}>
+            Welcome to Heroes Descent! &nbsp;|&nbsp; The dungeon stirs from its ancient slumber... &nbsp;|&nbsp; Server is ONLINE &nbsp;|&nbsp; Party up with friends and descend together &nbsp;|&nbsp; New content coming in future updates! &nbsp;|&nbsp; Welcome to Heroes Descent!
+          </span>
+        </div>
+      </div>
+
+      {/* Header — logo banner + welcome info bar */}
       <header className={styles.header}>
-        <h1 className={styles.gameTitle}>Heroes Descent</h1>
-        <p className={styles.welcomeText}>
-          {/* Rendered in three spans so the username can be white while the rest is gold */}
-          {before}
-          {namePart && <span className={styles.heroName}>{namePart}</span>}
-          {after}
-          <span className={styles.cursor}>_</span>
-        </p>
-        <button className={styles.logoutBtn} onClick={onLogout}>[ Logout ]</button>
+        <div className={styles.logoBanner}>
+          <img src="/logga.webp" className={styles.logo} alt="Heroes Descent" />
+        </div>
+        <div className={styles.headerInfo}>
+          <p className={styles.welcomeText}>
+            {before}
+            {namePart && <span className={styles.heroName}>{namePart}</span>}
+            {after}
+            <span className={styles.cursor}>_</span>
+          </p>
+          <span className={styles.onlineCount}>
+            <span className={styles.onlineDot} />Players online: 1
+          </span>
+          <button className={styles.logoutBtn} onClick={onLogout}>[ Logout ]</button>
+        </div>
       </header>
 
       {/* Play button + keyboard shortcut hint */}
       <section className={styles.playSection}>
         <button className={styles.playBtn} onClick={onPlay}>
-          ▶ Enter the Descent
+          <span className={styles.playIcon}>▶</span>
+          <span className={styles.playLabel}>PLAY</span>
         </button>
         {/* Shows the currently mapped key — updates live if the player remaps it in Settings */}
         <p className={styles.playHint}>
