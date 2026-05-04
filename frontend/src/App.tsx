@@ -1,19 +1,9 @@
-// App.tsx
-// Root component — handles which screen is currently visible.
-// Screens:
-//   login    — email + password form (LoginPage)
-//   register — create account form (RegisterPage)
-//   home     — main dashboard after login (HomePage) ← added today
-//   game     — placeholder until the game is implemented
-//
-// The JWT token in localStorage is checked on startup: if it exists, the player
-// goes straight to 'home' instead of 'login'.
-
 import { useState } from 'react';
 import { getToken, getUsername, clearAuth } from './services/authService';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import HomePage from './pages/HomePage';
+import GamePage from './pages/GamePage';
 
 type Screen = 'login' | 'register' | 'home' | 'game';
 
@@ -22,15 +12,19 @@ function App() {
     getToken() ? 'home' : 'login'
   );
   const [username, setUsername] = useState<string>(() => getUsername() ?? '');
+  // userId is the sub claim from the JWT; decode it client-side for the SignalR userId match.
+  const [userId, setUserId] = useState<string>(() => decodeUserId(getToken()));
 
-  function handleLogin(name: string) {
+  function handleLogin(name: string, token: string) {
     setUsername(name);
+    setUserId(decodeUserId(token));
     setScreen('home');
   }
 
   function handleLogout() {
     clearAuth();
     setUsername('');
+    setUserId('');
     setScreen('login');
   }
 
@@ -46,7 +40,7 @@ function App() {
   if (screen === 'login') {
     return (
       <LoginPage
-        onLogin={(name, _token) => handleLogin(name)}
+        onLogin={(name, token) => handleLogin(name, token)}
         onNavigateRegister={() => setScreen('register')}
       />
     );
@@ -63,36 +57,27 @@ function App() {
   }
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: '#07070d',
-      color: '#c9a84c',
-      fontFamily: "'Courier New', Courier, monospace",
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: '1.5rem',
-    }}>
-      <p style={{ letterSpacing: '0.1em' }}>[ Game not yet implemented ]</p>
-      <button
-        onClick={() => setScreen('home')}
-        style={{
-          background: 'transparent',
-          border: '1px solid rgba(201,168,76,0.4)',
-          color: '#c9a84c',
-          fontFamily: 'inherit',
-          fontSize: '0.8rem',
-          letterSpacing: '0.12em',
-          textTransform: 'uppercase',
-          padding: '0.5rem 1.2rem',
-          cursor: 'pointer',
-        }}
-      >
-        ← Return to Home
-      </button>
-    </div>
+    <GamePage
+      username={username}
+      userId={userId}
+      onBack={() => setScreen('home')}
+    />
   );
+}
+
+function decodeUserId(token: string | null): string {
+  if (!token) return '';
+  try {
+    const payload = token.split('.')[1];
+    const decoded = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+    // ASP.NET Core Identity JWT uses nameid or sub for the user ID
+    return decoded['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier']
+      ?? decoded['sub']
+      ?? decoded['nameid']
+      ?? '';
+  } catch {
+    return '';
+  }
 }
 
 export default App;

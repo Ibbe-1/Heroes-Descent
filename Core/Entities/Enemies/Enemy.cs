@@ -8,6 +8,7 @@ public abstract class Enemy
     public int Attack { get; protected set; }
     public int Defense { get; protected set; }
     public int ExperienceReward { get; protected set; }
+    public float MovementSpeed { get; protected set; } = 70f;
 
     public bool IsAlive => Health > 0;
 
@@ -19,4 +20,13 @@ public abstract class Enemy
     }
 
     public virtual void OnDeath() { }
+
+    public void ScaleForFloor(int floorBonus)
+    {
+        MaxHealth += floorBonus * (MaxHealth / 5);
+        Health = MaxHealth;
+        Attack += floorBonus * 2;
+        Defense += floorBonus;
+        ExperienceReward += floorBonus * 10;
+    }
 }

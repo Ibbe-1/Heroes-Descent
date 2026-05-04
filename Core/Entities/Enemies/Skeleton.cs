@@ -5,6 +5,7 @@ public class Skeleton : Enemy
     public Skeleton()
     {
         Name = "Skeleton";
+        MovementSpeed = 60f;
         MaxHealth = 50;
         Health = MaxHealth;
         Attack = 12;
