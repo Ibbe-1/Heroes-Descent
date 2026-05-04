@@ -30,9 +30,11 @@ export default function RegisterPage({ onRegistered, onNavigateLogin }: Props) {
 
   return (
     <div className={styles.container}>
+      <div className={styles.logoBanner}>
+        <img src="/logga.webp" className={styles.logo} alt="Heroes Descent" />
+      </div>
       <div className={styles.card}>
-        <h1 className={styles.title}>Heroes Descent</h1>
-        <h2 className={styles.subtitle}>Create Account</h2>
+        <h2 className={styles.subtitle}>— Create Account —</h2>
         <form onSubmit={handleSubmit} className={styles.form}>
           <label className={styles.label}>
             Username
@@ -70,7 +72,7 @@ export default function RegisterPage({ onRegistered, onNavigateLogin }: Props) {
           </label>
           {error && <p className={styles.error}>{error}</p>}
           <button className={styles.button} type="submit" disabled={loading}>
-            {loading ? 'Creating account…' : 'Begin Your Journey'}
+            {loading ? 'Creating...' : '⚔ Begin Your Journey ⚔'}
           </button>
         </form>
         <p className={styles.switch}>
