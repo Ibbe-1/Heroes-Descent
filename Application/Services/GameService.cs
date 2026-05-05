@@ -81,28 +81,55 @@ public class GameService
         }
         else if (player.Hero is Wizard wizard)
         {
-            // Wizard: Fireball hits EVERY alive enemy in the room for the same damage.
-            // UseAbility() deducts mana and returns the magic damage value.
-            int dmg = wizard.UseAbility();
-            int wizardGold = 0;
-            foreach (var e in alive)
+            // Wizard: Fireball is a directional skillshot. It ray-casts to the first enemy
+            // it hits for full damage, then splashes 60% to enemies within WizardSplashRadius.
+            float len = MathF.Sqrt(dirX * dirX + dirY * dirY);
+            if (len < 0.001f) { dirX = 0f; dirY = -1f; }
+            else { dirX /= len; dirY /= len; }
+
+            int dmg = wizard.UseAbility();  // deduct mana regardless of hit/miss
+
+            var primary = FindRayTarget(alive, player.X, player.Y, dirX, dirY,
+                RoomBounds.WizardAttackRange, RoomBounds.WizardHitRadius);
+
+            if (primary is null)
             {
-                var actual = e.Enemy.TakeDamage(dmg);
-                log.Add($"Fireball scorches {e.Enemy.Name} for {actual} magic dmg!");
-                if (!e.Enemy.IsAlive)
+                log.Add("Fireball fizzles — nothing in range!");
+            }
+            else
+            {
+                int wizardGold = 0;
+                var actual = primary.Enemy.TakeDamage(dmg);
+                log.Add($"Fireball strikes {primary.Enemy.Name} for {actual} magic dmg!");
+                if (!primary.Enemy.IsAlive)
                 {
-                    log.Add($"{e.Enemy.Name} is incinerated!");
-                    player.Hero.GainExperience(e.Enemy.ExperienceReward);
-                    wizardGold += e.Enemy.GoldReward;
+                    log.Add($"{primary.Enemy.Name} is incinerated!");
+                    player.Hero.GainExperience(primary.Enemy.ExperienceReward);
+                    wizardGold += primary.Enemy.GoldReward;
                 }
+
+                int splashDmg = (int)(dmg * 0.6f);
+                foreach (var e in alive.Where(e => e != primary && e.Enemy.IsAlive))
+                {
+                    if (Dist(primary.X, primary.Y, e.X, e.Y) > RoomBounds.WizardSplashRadius) continue;
+                    var splashActual = e.Enemy.TakeDamage(splashDmg);
+                    log.Add($"Splash burns {e.Enemy.Name} for {splashActual} magic dmg!");
+                    if (!e.Enemy.IsAlive)
+                    {
+                        log.Add($"{e.Enemy.Name} is incinerated!");
+                        player.Hero.GainExperience(e.Enemy.ExperienceReward);
+                        wizardGold += e.Enemy.GoldReward;
+                    }
+                }
+
+                if (wizardGold > 0)
+                {
+                    player.Gold += wizardGold;
+                    log.Add($"{player.Username} looted {wizardGold} gold!");
+                }
+                if (session.CurrentRoom.IsCleared)
+                    log.Add("Room cleared — advance when ready.");
             }
-            if (wizardGold > 0)
-            {
-                player.Gold += wizardGold;
-                log.Add($"{player.Username} looted {wizardGold} gold!");
-            }
-            if (session.CurrentRoom.IsCleared && alive.Count > 0)
-                log.Add("Room cleared — advance when ready.");
         }
         else if (player.Hero is Archer archer)
         {

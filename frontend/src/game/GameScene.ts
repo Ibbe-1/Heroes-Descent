@@ -223,6 +223,8 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (Phaser.Input.Keyboard.JustDown(this.kQ)) {
+      const me = this.state.players.find(p => p.userId === this.myUserId);
+      if (!me?.canUseAbility) return;  // not enough resource — skip animation and server call
       const ptr = this.input.activePointer;
       const dx = ptr.worldX - this.localX;
       const dy = ptr.worldY - this.localY;
@@ -457,6 +459,30 @@ export class GameScene extends Phaser.Scene {
   }
 
   // Class-specific Q ability visual triggered immediately on Q press.
+  // Replicates the server's FindRayTarget logic to predict where the fireball will hit.
+  // Returns the impact point so the orb animation can stop and explode there.
+  private findFireballImpact(nx: number, ny: number): { x: number; y: number } {
+    const range    = CLASS_RANGE['Wizard'];
+    const hitRadius = HIT_RADIUS['Wizard'] ?? 28;
+    let bestT = range;
+
+    if (this.state) {
+      for (const e of this.state.currentRoom.enemies) {
+        if (!e.isAlive) continue;
+        const ex = e.x - this.localX;
+        const ey = e.y - this.localY;
+        const t  = ex * nx + ey * ny;
+        if (t < 0 || t >= bestT) continue;
+        const cx = this.localX + nx * t;
+        const cy = this.localY + ny * t;
+        const perp = Math.sqrt((cx - e.x) ** 2 + (cy - e.y) ** 2);
+        if (perp <= hitRadius) bestT = t;
+      }
+    }
+
+    return { x: this.localX + nx * bestT, y: this.localY + ny * bestT };
+  }
+
   private flashAbility(nx: number, ny: number) {
     if (this.myHeroClass === 'Warrior') {
       // Shield Block: expanding golden ring — communicates a defensive stance.
@@ -483,11 +509,24 @@ export class GameScene extends Phaser.Scene {
         });
       });
     } else if (this.myHeroClass === 'Wizard') {
-      // Fireball: ring expands outward to convey area damage on all enemies.
-      const ring = this.add.arc(this.localX, this.localY, 18, 0, 360, false, 0x9b59b6, 0.85).setDepth(15);
+      // Fireball: orb travels toward the first enemy on the ray, bursts on impact.
+      // Client-side ray-cast mirrors server logic so the explosion lands on the target.
+      const { x: impactX, y: impactY } = this.findFireballImpact(nx, ny);
+      const dx = impactX - this.localX;
+      const dy = impactY - this.localY;
+      const travelDist = Math.sqrt(dx * dx + dy * dy);
+      const duration = Math.max(120, (travelDist / CLASS_RANGE['Wizard']) * 480);
+      const orb = this.add.arc(this.localX, this.localY, 11, 0, 360, false, 0xe67e22, 0.95).setDepth(15);
       this.tweens.add({
-        targets: ring, scaleX: 22, scaleY: 22, alpha: 0, duration: 580,
-        onComplete: () => ring.destroy(),
+        targets: orb, x: impactX, y: impactY, duration,
+        onComplete: () => {
+          orb.destroy();
+          const burst = this.add.arc(impactX, impactY, 12, 0, 360, false, 0xe67e22, 0.7).setDepth(15);
+          this.tweens.add({
+            targets: burst, scaleX: 7, scaleY: 7, alpha: 0, duration: 300,
+            onComplete: () => burst.destroy(),
+          });
+        },
       });
     }
   }
