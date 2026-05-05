@@ -120,6 +120,121 @@ public class GameService
         return (log.Count > 0, log);
     }
 
+    // Called when a player presses SPACE with their mouse cursor aimed in a direction.
+    // dirX/dirY is a normalised direction vector sent by the client.
+    //
+    // Warrior — 90° melee cone: hits the closest enemy within WarriorAttackRange
+    //           that falls inside the ±45° arc around the aimed direction.
+    // Archer  — ray skillshot: the arrow travels in (dirX, dirY) and hits the first
+    //           enemy whose centre is within ArcherHitRadius of the ray, up to 600 px.
+    // Wizard  — ray skillshot: same as Archer but wider hit-box (28 px) and longer
+    //           range (800 px). Slower projectile on the client side.
+    //
+    // Cooldown is applied even on a miss so rapid-clicking doesn't bypass it.
+    public (bool acted, List<string> log) AttackDirectional(GameSession session, string userId, float dirX, float dirY)
+    {
+        var player = session.Players.FirstOrDefault(p => p.UserId == userId);
+        if (player is null || !player.Hero.IsAlive) return (false, []);
+
+        var cooldown = AttackCooldownMs(player.Hero);
+        if (session.LastAttackTime.TryGetValue(userId, out var last) &&
+            DateTime.UtcNow - last < TimeSpan.FromMilliseconds(cooldown))
+            return (false, []);
+
+        float len = MathF.Sqrt(dirX * dirX + dirY * dirY);
+        if (len < 0.001f) return (false, []);
+        dirX /= len;
+        dirY /= len;
+
+        // Apply cooldown immediately so even a miss consumes the attack window.
+        session.LastAttackTime[userId] = DateTime.UtcNow;
+
+        var alive = session.CurrentRoom.Enemies.Where(e => e.Enemy.IsAlive).ToList();
+
+        EnemyInstance? target;
+        if (player.Hero is Warrior)
+        {
+            target = FindConeTarget(alive, player.X, player.Y, dirX, dirY,
+                RoomBounds.WarriorAttackRange, RoomBounds.WarriorConeHalfAngle);
+        }
+        else
+        {
+            float range     = player.Hero is Archer ? RoomBounds.ArcherAttackRange : RoomBounds.WizardAttackRange;
+            float hitRadius = player.Hero is Archer ? RoomBounds.ArcherHitRadius   : RoomBounds.WizardHitRadius;
+            target = FindRayTarget(alive, player.X, player.Y, dirX, dirY, range, hitRadius);
+        }
+
+        if (target is null) return (false, []);   // missed — cooldown already applied above
+
+        var log    = new List<string>();
+        var raw    = player.Hero.BasicAttack();
+        var actual = target.Enemy.TakeDamage(raw);
+        log.Add($"{player.Username} hits {target.Enemy.Name} for {actual} dmg!");
+
+        if (!target.Enemy.IsAlive)
+        {
+            log.Add($"{target.Enemy.Name} is defeated!");
+            player.Hero.GainExperience(target.Enemy.ExperienceReward);
+            if (session.CurrentRoom.IsCleared) log.Add("Room cleared — advance when ready.");
+        }
+
+        return (true, log);
+    }
+
+    // Returns the closest enemy inside a cone (halfAngle radians either side of the aim direction).
+    private static EnemyInstance? FindConeTarget(
+        List<EnemyInstance> alive, float px, float py, float dirX, float dirY,
+        float range, float halfAngle)
+    {
+        EnemyInstance? best = null;
+        float bestDist = float.MaxValue;
+        float cosHalf  = MathF.Cos(halfAngle);
+
+        foreach (var e in alive)
+        {
+            float dist = Dist(px, py, e.X, e.Y);
+            if (dist > range || dist >= bestDist) continue;
+
+            if (dist < 0.1f) { best = e; bestDist = dist; continue; }  // standing on enemy
+
+            float ex  = (e.X - px) / dist;
+            float ey  = (e.Y - py) / dist;
+            float dot = ex * dirX + ey * dirY;   // cos(angle between aim and enemy direction)
+            if (dot >= cosHalf)
+            {
+                best = e;
+                bestDist = dist;
+            }
+        }
+        return best;
+    }
+
+    // Returns the first enemy hit by a ray cast from (px,py) in direction (dirX,dirY).
+    // "Hit" means the enemy centre is within hitRadius pixels of the ray, within range px.
+    private static EnemyInstance? FindRayTarget(
+        List<EnemyInstance> alive, float px, float py, float dirX, float dirY,
+        float range, float hitRadius)
+    {
+        EnemyInstance? best = null;
+        float bestT = float.MaxValue;
+
+        foreach (var e in alive)
+        {
+            float ex = e.X - px;
+            float ey = e.Y - py;
+            float t  = ex * dirX + ey * dirY;           // projection of enemy onto ray
+            if (t < 0 || t > range) continue;           // behind player or beyond range
+
+            float cx   = px + dirX * t;
+            float cy   = py + dirY * t;
+            float perp = Dist(cx, cy, e.X, e.Y);        // perpendicular distance from ray to centre
+            if (perp > hitRadius) continue;
+
+            if (t < bestT) { bestT = t; best = e; }
+        }
+        return best;
+    }
+
     // ── Enemy AI ──────────────────────────────────────────────────────────────
 
     // Moves every alive enemy one step toward the nearest alive player.

@@ -17,8 +17,14 @@ import type { GameEngine } from './gameEngine';
 // R.CX / R.CY is the center of the room where players spawn.
 const R = { L: 48, R: 912, T: 48, B: 592, W: 864, H: 544, CX: 480, CY: 320 };
 
-// How close a player must be to an enemy to attack it (120 px radius).
+// Warrior melee attack range (px).
 const ATTACK_RANGE = 120;
+
+// Per-class attack ranges — must match RoomBounds.cs on the server.
+const CLASS_RANGE: Record<string, number> = { Warrior: 120, Archer: 600, Wizard: 800 };
+
+// Projectile hit-box radii shown on the aim line indicator.
+const HIT_RADIUS: Record<string, number> = { Archer: 16, Wizard: 28 };
 
 // Tile size for the checkerboard floor pattern.
 const TILE = 64;
@@ -81,6 +87,12 @@ export class GameScene extends Phaser.Scene {
   private others = new Map<string, EntitySprites>();
   private enemySprites = new Map<string, EntitySprites & { prevHp: number; dead: boolean }>();
 
+  // Hero class of the local player — set from state updates, used for aim visuals.
+  private myHeroClass = '';
+
+  // Graphics object redrawn every frame to show the directional aim indicator.
+  private aimGraphics!: Phaser.GameObjects.Graphics;
+
   // Keyboard keys — registered in create() and polled in update().
   private kW!: Phaser.Input.Keyboard.Key;
   private kA!: Phaser.Input.Keyboard.Key;
@@ -102,8 +114,12 @@ export class GameScene extends Phaser.Scene {
     // redraw all bars from scratch — simpler than updating many individual objects.
     this.hpBars = this.add.graphics().setDepth(20);
 
-    // Faint gold circle centered on the player — shows attack range at a glance.
-    this.rangeCircle = this.add.arc(R.CX, R.CY, ATTACK_RANGE, 0, 360, false, 0xc9a84c, 0.07).setDepth(5);
+    // Aim indicator redrawn each frame — shows cone (Warrior) or aim line (Archer/Wizard).
+    this.aimGraphics = this.add.graphics().setDepth(6);
+
+    // Faint gold circle centered on the player — only visible for Warrior (melee range hint).
+    // Hidden by default; applyState() shows it once hero class is known.
+    this.rangeCircle = this.add.arc(R.CX, R.CY, ATTACK_RANGE, 0, 360, false, 0xc9a84c, 0.07).setDepth(5).setVisible(false);
 
     // The local player's rectangle and name tag. setDepth() controls draw order —
     // higher values appear on top. Player (10) is above enemies (8) and floor (0).
@@ -147,6 +163,7 @@ export class GameScene extends Phaser.Scene {
     this.sendPos(_time);
     this.handleInput();
     this.drawHpBars();
+    this.drawAim();
   }
 
   // ── Input ─────────────────────────────────────────────────────────────────
@@ -189,8 +206,19 @@ export class GameScene extends Phaser.Scene {
   private handleInput() {
     if (!this.engine || !this.state) return;
     if (Phaser.Input.Keyboard.JustDown(this.kSpace)) {
-      this.engine.attackNearest();
-      this.flashAttack();  // immediate local visual — server confirms the hit
+      const ptr = this.input.activePointer;
+      const dx = ptr.worldX - this.localX;
+      const dy = ptr.worldY - this.localY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 0) {
+        const nx = dx / dist;
+        const ny = dy / dist;
+        const maxRange = CLASS_RANGE[this.myHeroClass] ?? ATTACK_RANGE;
+        // Travel to cursor position, capped at class max range.
+        const aimDist = Math.min(dist, maxRange);
+        this.engine.attackDirectional(nx, ny);
+        this.flashAttack(nx, ny, aimDist);
+      }
     }
     if (Phaser.Input.Keyboard.JustDown(this.kQ)) {
       this.engine.useAbility();
@@ -218,8 +246,11 @@ export class GameScene extends Phaser.Scene {
     // Turn grey if dead so the player can see they're out of the fight.
     const me = s.players.find(p => p.userId === this.myUserId);
     if (me) {
+      this.myHeroClass = me.heroClass;
       const col = CLASS_COLOR[me.heroClass] ?? 0x3498db;
       this.myBody.setFillStyle(me.isAlive ? col : 0x555555);
+      // Range circle only makes sense for Warrior (melee) — ranged classes get the aim line.
+      this.rangeCircle.setVisible(me.heroClass === 'Warrior' && me.isAlive);
     }
 
     // Sync other players: create sprites for new arrivals, update positions,
@@ -374,15 +405,89 @@ export class GameScene extends Phaser.Scene {
 
   // ── Visual effects ────────────────────────────────────────────────────────
 
-  // Shows an expanding golden ring when the player presses SPACE.
-  // Runs client-side immediately for responsiveness — the server separately
-  // confirms whether the attack actually landed and broadcasts damage.
-  private flashAttack() {
-    const ring = this.add.arc(this.localX, this.localY, ATTACK_RANGE * 0.6, 0, 360, false, 0xc9a84c, 0.4).setDepth(15);
-    this.tweens.add({
-      targets: ring, alpha: 0, scaleX: 1.5, scaleY: 1.5, duration: 250,
-      onComplete: () => ring.destroy(),
-    });
+  // Class-aware attack visual triggered immediately on SPACE press.
+  // nx/ny is the normalised aim direction; aimDist is how far the effect travels.
+  // This runs client-side for responsiveness — the server confirms actual hits.
+  private flashAttack(nx: number, ny: number, aimDist: number) {
+    const endX = this.localX + nx * aimDist;
+    const endY = this.localY + ny * aimDist;
+
+    if (this.myHeroClass === 'Warrior') {
+      // Expanding golden arc — communicates a melee swing without a projectile.
+      const ring = this.add.arc(this.localX, this.localY, ATTACK_RANGE * 0.6, 0, 360, false, 0xc9a84c, 0.4).setDepth(15);
+      this.tweens.add({
+        targets: ring, alpha: 0, scaleX: 1.5, scaleY: 1.5, duration: 250,
+        onComplete: () => ring.destroy(),
+      });
+    } else if (this.myHeroClass === 'Archer') {
+      // Thin green rectangle that flies toward the cursor — arrow in flight.
+      const arrow = this.add.rectangle(this.localX, this.localY, 16, 3, 0x27ae60).setDepth(15);
+      arrow.rotation = Math.atan2(ny, nx);
+      this.tweens.add({
+        targets: arrow, x: endX, y: endY, duration: 220,
+        onComplete: () => arrow.destroy(),
+      });
+    } else if (this.myHeroClass === 'Wizard') {
+      // Purple orb that drifts toward the cursor — slower than an arrow.
+      const orb = this.add.arc(this.localX, this.localY, 9, 0, 360, false, 0x8e44ad, 0.9).setDepth(15);
+      this.tweens.add({
+        targets: orb, x: endX, y: endY, duration: 420, alpha: 0.15,
+        onComplete: () => orb.destroy(),
+      });
+    }
+  }
+
+  // Redraws the directional aim indicator every frame based on current mouse position.
+  // Warrior: a 90° cone (two lines + arc) showing the melee swing sector.
+  // Archer/Wizard: a thin aim line toward the cursor with a hit-box circle at the tip.
+  private drawAim() {
+    this.aimGraphics.clear();
+    if (!this.myHeroClass || !this.state) return;
+
+    const me = this.state.players.find(p => p.userId === this.myUserId);
+    if (!me || !me.isAlive) return;
+
+    const ptr = this.input.activePointer;
+    const dx = ptr.worldX - this.localX;
+    const dy = ptr.worldY - this.localY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 1) return;
+
+    const nx = dx / dist;
+    const ny = dy / dist;
+
+    if (this.myHeroClass === 'Warrior') {
+      const range = ATTACK_RANGE;
+      const half = Math.PI / 4;  // 45°
+      const angle = Math.atan2(ny, nx);
+      const a1 = angle - half;
+      const a2 = angle + half;
+
+      this.aimGraphics.lineStyle(1.5, 0xc9a84c, 0.55);
+      // Two lines from player forming the cone edges.
+      this.aimGraphics.lineBetween(
+        this.localX, this.localY,
+        this.localX + Math.cos(a1) * range, this.localY + Math.sin(a1) * range,
+      );
+      this.aimGraphics.lineBetween(
+        this.localX, this.localY,
+        this.localX + Math.cos(a2) * range, this.localY + Math.sin(a2) * range,
+      );
+      // Arc closing the cone tip.
+      this.aimGraphics.beginPath();
+      this.aimGraphics.arc(this.localX, this.localY, range, a1, a2, false);
+      this.aimGraphics.strokePath();
+    } else {
+      const range = CLASS_RANGE[this.myHeroClass] ?? 600;
+      const hitR  = HIT_RADIUS[this.myHeroClass] ?? 16;
+      const endX  = this.localX + nx * range;
+      const endY  = this.localY + ny * range;
+
+      this.aimGraphics.lineStyle(1, 0xc9a84c, 0.35);
+      this.aimGraphics.lineBetween(this.localX, this.localY, endX, endY);
+      // Small circle at the tip representing the projectile hit-box size.
+      this.aimGraphics.strokeCircle(endX, endY, hitR);
+    }
   }
 
   // ── Cleanup ───────────────────────────────────────────────────────────────

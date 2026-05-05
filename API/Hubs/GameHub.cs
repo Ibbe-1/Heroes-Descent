@@ -102,6 +102,30 @@ public class GameHub : Hub
 
     // ── Player actions ────────────────────────────────────────────────────────
 
+    // Called when the player presses SPACE with a mouse-aimed direction.
+    // dirX/dirY is a normalised direction vector from the client.
+    // Warrior: cone melee hit. Archer/Wizard: ray-cast skillshot.
+    public async Task AttackDirectional(string sessionId, float dirX, float dirY)
+    {
+        var session = _sessions.GetSession(sessionId);
+        if (session is null) return;
+
+        var userId = Context.UserIdentifier!;
+
+        Application.Dtos.GameStateDto? dto = null;
+        lock (session.Lock)
+        {
+            if (session.IsGameOver || session.IsVictory) return;
+            var (acted, log) = _game.AttackDirectional(session, userId, dirX, dirY);
+            if (!acted) return;
+            session.AddLogRange(log);
+            dto = _game.BuildDto(session);
+        }
+
+        if (dto is not null)
+            await Clients.Group(sessionId).SendAsync("GameStateUpdate", dto);
+    }
+
     // Called when the player presses SPACE.
     // The server resolves the attack (finds nearest enemy, checks range and cooldown)
     // and immediately broadcasts the result to the whole session so every player

@@ -19,8 +19,18 @@ public static class RoomBounds
     public const float CenterX = (Left + Right) / 2f;    // 480
     public const float CenterY = (Top + Bottom) / 2f;    // 320
 
-    // How close the player must be to an enemy before [SPACE] attack connects
-    public const float PlayerAttackRange = 120f;
+    // Warrior melee cone range
+    public const float PlayerAttackRange    = 120f;  // kept for AttackNearest compat
+    public const float WarriorAttackRange   = 120f;
+    public const float WarriorConeHalfAngle = MathF.PI / 4f;  // ±45° = 90° total cone
+
+    // Archer arrow range and hit-box radius (how close ray must pass to enemy centre)
+    public const float ArcherAttackRange = 600f;
+    public const float ArcherHitRadius   = 16f;
+
+    // Wizard bolt range and hit-box radius (larger — easier to land but slower)
+    public const float WizardAttackRange = 800f;
+    public const float WizardHitRadius   = 28f;
 
     // How close an enemy must be to a player before it can deal damage
     public const float EnemyAttackRange  = 80f;
