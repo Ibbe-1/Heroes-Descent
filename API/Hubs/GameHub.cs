@@ -1,3 +1,16 @@
+// GameHub.cs — the SignalR hub that handles all real-time communication between
+// the server and connected players.
+//
+// Every player action (attack, ability, move room) arrives here as a hub method call.
+// After resolving the action through GameService, the hub broadcasts an updated
+// GameStateDto to the entire session group so every client stays in sync.
+//
+// New hub methods should follow the same pattern:
+//   1. Fetch the session (return early if missing).
+//   2. Acquire session.Lock before touching any mutable state.
+//   3. Delegate logic to GameService and collect log lines.
+//   4. Build the DTO inside the lock, then broadcast outside it.
+
 using Heroes_Descent.Application.Services;
 using Heroes_Descent.Core.Entities.Heroes;
 using Heroes_Descent.Core.GameState;
@@ -186,6 +199,16 @@ public class GameHub : Hub
 
                 var room = session.CurrentRoom;
                 session.AddLog($"» Room {session.CurrentRoomIndex + 1}/{session.Rooms.Count} — {room.Type}");
+
+                if (room.Type == RoomType.TreasureChest && !room.ChestOpened)
+                {
+                    room.OpenChest();
+                    foreach (var p in session.Players)
+                    {
+                        p.Gold += room.ChestGold;
+                        session.AddLog($"✦ {p.Username} found {room.ChestGold} gold coins in the chest!");
+                    }
+                }
             }
 
             dto = _game.BuildDto(session);

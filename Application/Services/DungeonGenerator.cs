@@ -18,6 +18,13 @@ public class DungeonGenerator
 
         for (int i = 0; i < normalCount; i++)
         {
+            // Every 3rd room (index 2, 5, 8…) is a treasure chest — no enemies, just gold.
+            if ((i + 1) % 3 == 0)
+            {
+                rooms.Add(MakeChestRoom(i));
+                continue;
+            }
+
             // Rooms after index 3 have a 35% chance to be upgraded to "Elite"
             // (more enemies, harder fight, same XP reward for now).
             bool isElite = i >= 3 && Random.Shared.Next(100) < 35;
@@ -40,6 +47,12 @@ public class DungeonGenerator
             .ToList();
 
         return new RoomState(index, type, enemies);
+    }
+
+    private static RoomState MakeChestRoom(int index)
+    {
+        int gold = Random.Shared.Next(15, 31);
+        return new RoomState(index, RoomType.TreasureChest, [], gold);
     }
 
     private static RoomState MakeBossRoom(int index, int floor)
