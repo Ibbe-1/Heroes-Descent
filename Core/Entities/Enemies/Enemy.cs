@@ -13,6 +13,11 @@ public abstract class Enemy
     public int GoldReward { get; protected set; }
     public float MovementSpeed { get; protected set; } = 70f;
 
+    // Ranged enemies stop and shoot instead of closing to melee distance.
+    public virtual bool ShootsProjectiles => false;
+    // Attack range used instead of EnemyAttackRange when ShootsProjectiles is true.
+    public virtual float ProjectileRange => 0f;
+
     public bool IsAlive => Health > 0;
 
     public virtual int TakeDamage(int incomingDamage)

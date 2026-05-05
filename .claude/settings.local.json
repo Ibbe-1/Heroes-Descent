@@ -7,7 +7,11 @@
       "Read(//home/ibbe/.dotnet/**)",
       "Bash(find / -name \"dotnet\" -type f)",
       "Bash(/home/ibbe/.dotnet/dotnet build *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Gragas\\\\source\\\\repos\\\\Grupparbete\\\\Heroes Descent\" -Recurse)",
+      "Bash(Select-Object -First 100)",
+      "Bash(Format-Table FullName)",
+      "Bash(npx tsc *)"
     ]
   }
 }

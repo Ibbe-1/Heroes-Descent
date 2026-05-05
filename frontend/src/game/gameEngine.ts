@@ -81,8 +81,9 @@ export class GameEngine {
   }
 
   // Tells the server the player pressed Q (class ability).
-  useAbility(): void {
-    this.connection.invoke('UseAbility', this._sessionId).catch(() => {});
+  // dirX/dirY is the normalised aim direction — used by Archer's Multi-Shot.
+  useAbility(dirX = 0, dirY = 0): void {
+    this.connection.invoke('UseAbility', this._sessionId, dirX, dirY).catch(() => {});
   }
 
   // Tells the server to move the party to the next room (only works if room is cleared).
