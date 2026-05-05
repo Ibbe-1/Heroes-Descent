@@ -288,7 +288,8 @@ export default function GamePage({ username, userId, onBack }: Props) {
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 8, borderLeft: `1px solid rgba(255,255,255,0.07)` }}>
               <span style={{ fontSize: 9, color: GRAY }}>
                 <kbd style={{ color: WHITE }}>WASD</kbd> Move &nbsp;
-                <kbd style={{ color: WHITE }}>SPACE</kbd> Attack (range: 120px) &nbsp;
+                <kbd style={{ color: WHITE }}>Mouse</kbd> Aim &nbsp;
+                <kbd style={{ color: WHITE }}>SPACE</kbd> Attack &nbsp;
                 <kbd style={{ color: WHITE }}>Q</kbd> {me?.abilityName ?? 'Ability'}
                 {me && !me.canUseAbility && <span style={{ color: GRAY }}> (not ready)</span>}
               </span>

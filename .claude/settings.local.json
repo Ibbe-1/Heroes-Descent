@@ -1,8 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm install *)",
-      "Bash(npx tsc *)"
+      "Bash(git *)",
+      "Bash(xargs ls *)",
+      "Bash(dotnet build *)",
+      "Read(//home/ibbe/.dotnet/**)",
+      "Bash(find / -name \"dotnet\" -type f)",
+      "Bash(/home/ibbe/.dotnet/dotnet build *)",
+      "Bash(npm run *)"
     ]
   }
 }

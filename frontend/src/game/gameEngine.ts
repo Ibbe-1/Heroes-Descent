@@ -69,8 +69,13 @@ export class GameEngine {
   }
 
   // Tells the server the player pressed SPACE.
-  // The server finds the nearest enemy, checks range and cooldown, applies damage,
-  // and broadcasts the updated state to all players in the session.
+  // dirX/dirY is a normalised direction vector toward the mouse cursor.
+  // Warrior: cone melee. Archer/Wizard: ray-cast skillshot.
+  attackDirectional(dirX: number, dirY: number): void {
+    this.connection.invoke('AttackDirectional', this._sessionId, dirX, dirY).catch(() => {});
+  }
+
+  // Legacy auto-target — kept for potential fallback use.
   attackNearest(): void {
     this.connection.invoke('AttackNearest', this._sessionId).catch(() => {});
   }
