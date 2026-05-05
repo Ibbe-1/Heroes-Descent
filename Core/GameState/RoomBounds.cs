@@ -29,8 +29,10 @@ public static class RoomBounds
     public const float ArcherHitRadius   = 16f;
 
     // Wizard bolt range and hit-box radius (larger — easier to land but slower)
-    public const float WizardAttackRange = 800f;
-    public const float WizardHitRadius   = 28f;
+    public const float WizardAttackRange  = 800f;
+    public const float WizardHitRadius    = 28f;
+    // Radius around the fireball's primary impact point that receives splash damage
+    public const float WizardSplashRadius = 80f;
 
     // How close an enemy must be to a player before it can deal damage
     public const float EnemyAttackRange  = 80f;

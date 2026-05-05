@@ -40,7 +40,7 @@ public class Wizard : Hero
 
     // Description is dynamic — shows the current damage value based on Intellect.
     public override string AbilityDescription =>
-        $"Costs {AbilityCost} mana. Deals {35 + Intellect * 2} magic damage to ALL enemies.";
+        $"Costs {AbilityCost} mana. Hurls a fireball that deals {35 + Intellect * 2} magic damage on impact with 60% splash to nearby enemies.";
 
     public override bool CanUseAbility() => CurrentMana >= AbilityCost;
 

@@ -27,6 +27,7 @@ const C = {
   blue: '#2980b9',
   orange: '#e67e22',
   green: '#27ae60',
+  yellow: '#f1c40f',
   white: '#e8e8e8',
   gray: '#555',
   font: "'Courier New', Courier, monospace",
@@ -44,7 +45,7 @@ function bar(val: number, max: number, color: string) {
 function resourceColor(name: string) {
   if (name === 'Mana')   return C.blue;
   if (name === 'Rage')   return C.orange;
-  if (name === 'Energy') return C.green;
+  if (name === 'Energy') return C.yellow;
   return C.gold;
 }
 
