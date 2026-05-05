@@ -1,9 +1,14 @@
 namespace Heroes_Descent.Application.Dtos;
 
-// DTOs (Data Transfer Objects) are the shapes that get serialised to JSON
-// and sent over SignalR to every player in the session on every state update.
+// GameStateDto.cs — all the data transfer objects (DTOs) sent over SignalR.
+//
+// These are the shapes that get serialised to JSON and broadcast to every player
+// after any game event (attack, ability use, enemy tick, room advance, etc.).
 // They are plain data — no methods, no references to domain objects.
 // Using C# records gives us immutable, value-based types with minimal boilerplate.
+//
+// The matching TypeScript interfaces live in frontend/src/types/gameTypes.ts.
+// Keep both files in sync: adding a field here means adding it there too.
 
 // The root object broadcast to all clients after any game event.
 // Contains everything the frontend needs to render one frame of the game.
@@ -20,9 +25,9 @@ public record GameStateDto(
 
 // Describes the room the party is currently in.
 public record RoomDto(
-    string Type,               // "Normal", "Elite", or "Boss"
-    List<EnemyDto> Enemies,
-    bool IsCleared             // true when every enemy is dead — enables advance button
+    string Type,               // "Normal", "Elite", "Boss", or "TreasureChest"
+    List<EnemyDto> Enemies,    // empty for TreasureChest rooms
+    bool IsCleared             // true when all enemies are dead; always true for TreasureChest
 );
 
 // One enemy in the current room.
@@ -43,6 +48,8 @@ public record EnemyDto(
 //   Warrior → Rage, Wizard → Mana, Archer → Energy.
 // AttackCooldownMs tells the frontend how long to disable the attack button locally.
 // X and Y let other clients render this player's sprite at the right position.
+// Gold is the player's current coin total — earned from kills and treasure chests,
+// and will be spent at the shop once that is implemented.
 public record PlayerDto(
     string UserId,
     string Username,
@@ -57,5 +64,6 @@ public record PlayerDto(
     string AbilityName,
     int    AttackCooldownMs,
     float  X,
-    float  Y
+    float  Y,
+    int    Gold
 );

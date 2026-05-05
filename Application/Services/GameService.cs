@@ -50,7 +50,9 @@ public class GameService
 
         if (!nearest.Enemy.IsAlive)
         {
-            log.Add($"{nearest.Enemy.Name} is defeated!");
+            int gold = nearest.Enemy.GoldReward;
+            player.Gold += gold;
+            log.Add($"{nearest.Enemy.Name} is defeated! (+{gold}g)");
             player.Hero.GainExperience(nearest.Enemy.ExperienceReward);
             if (session.CurrentRoom.IsCleared) log.Add("Room cleared — advance when ready.");
         }
@@ -82,6 +84,7 @@ public class GameService
             // Wizard: Fireball hits EVERY alive enemy in the room for the same damage.
             // UseAbility() deducts mana and returns the magic damage value.
             int dmg = wizard.UseAbility();
+            int wizardGold = 0;
             foreach (var e in alive)
             {
                 var actual = e.Enemy.TakeDamage(dmg);
@@ -90,7 +93,13 @@ public class GameService
                 {
                     log.Add($"{e.Enemy.Name} is incinerated!");
                     player.Hero.GainExperience(e.Enemy.ExperienceReward);
+                    wizardGold += e.Enemy.GoldReward;
                 }
+            }
+            if (wizardGold > 0)
+            {
+                player.Gold += wizardGold;
+                log.Add($"{player.Username} looted {wizardGold} gold!");
             }
             if (session.CurrentRoom.IsCleared && alive.Count > 0)
                 log.Add("Room cleared — advance when ready.");
@@ -101,6 +110,7 @@ public class GameService
             // UseAbility() spends Energy and returns how many targets to hit.
             int targetCount = archer.UseAbility();
             var targets = alive.OrderBy(_ => Random.Shared.Next()).Take(targetCount).ToList();
+            int archerGold = 0;
             foreach (var e in targets)
             {
                 var raw    = archer.BasicAttack();            // rolls for crit internally
@@ -111,7 +121,13 @@ public class GameService
                 {
                     log.Add($"{e.Enemy.Name} is defeated!");
                     player.Hero.GainExperience(e.Enemy.ExperienceReward);
+                    archerGold += e.Enemy.GoldReward;
                 }
+            }
+            if (archerGold > 0)
+            {
+                player.Gold += archerGold;
+                log.Add($"{player.Username} looted {archerGold} gold!");
             }
             if (session.CurrentRoom.IsCleared)
                 log.Add("Room cleared — advance when ready.");
@@ -357,7 +373,8 @@ public class GameService
                 res, maxRes, resName,
                 p.Hero.CanUseAbility(), p.Hero.AbilityName,
                 AttackCooldownMs(p.Hero),
-                p.X, p.Y           // position so other clients can render this player
+                p.X, p.Y,
+                p.Gold
             );
         }).ToList();
 

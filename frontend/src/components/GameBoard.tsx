@@ -1,3 +1,18 @@
+// GameBoard.tsx — the main React UI wrapper rendered during an active dungeon run.
+//
+// Responsibilities:
+//   - Header bar: floor label, room type badge, room counter, session code, leave button.
+//   - Left panel: enemy list with health bars and per-enemy attack buttons;
+//     replaced by a treasure chest panel when the current room is a TreasureChest.
+//   - Right panel: scrolling combat log fed from server-pushed state.
+//   - Bottom panel: one PlayerCard per party member showing HP, resource bar,
+//     gold balance, and (for the local player) the ability button.
+//   - End states: full-screen VICTORY and DEFEATED overlays.
+//
+// This component does NOT own game state — it receives a GameState snapshot as a
+// prop on every server broadcast and re-renders from that. All actions (attack,
+// ability, move room) are forwarded to the GameEngine which calls the SignalR hub.
+
 import { useRef, useEffect, useState } from 'react';
 import type { GameState, PlayerState } from '../types/gameTypes';
 import type { GameEngine } from '../game/gameEngine';
@@ -41,15 +56,17 @@ function classIcon(cls: string) {
 }
 
 function roomLabel(type: string) {
-  if (type === 'Boss')  return '☠ BOSS';
-  if (type === 'Elite') return '★ ELITE';
+  if (type === 'Boss')          return '☠ BOSS';
+  if (type === 'Elite')         return '★ ELITE';
+  if (type === 'TreasureChest') return '✦ TREASURE';
   return '○ NORMAL';
 }
 
 function roomLabelColor(type: string) {
-  if (type === 'Boss')  return '#e74c3c';
-  if (type === 'Elite') return '#f39c12';
-  return C.gold;
+  if (type === 'Boss')          return '#e74c3c';
+  if (type === 'Elite')         return '#f39c12';
+  if (type === 'TreasureChest') return C.gold;
+  return C.goldDim;
 }
 
 // ── PlayerCard ────────────────────────────────────────────────────────────────
@@ -105,7 +122,7 @@ function PlayerCard({
         </span>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: isMe ? '0.5rem' : 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
         <span style={{ color: resColor, fontFamily: C.font, fontSize: '0.65rem', width: 20 }}>
           {player.resourceName.slice(0, 2)}
         </span>
@@ -113,6 +130,10 @@ function PlayerCard({
         <span style={{ color: C.white, fontFamily: C.font, fontSize: '0.65rem', width: 60, textAlign: 'right' }}>
           {player.resource}/{player.maxResource}
         </span>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: isMe ? '0.5rem' : 0 }}>
+        <span style={{ color: C.gold, fontFamily: C.font, fontSize: '0.65rem' }}>✦ {player.gold}g</span>
       </div>
 
       {isMe && (
@@ -239,10 +260,26 @@ export default function GameBoard({ state, userId, engine, sessionCode, onLeave 
         {/* Left: enemies + advance */}
         <div style={{ padding: '1rem 1.2rem', borderRight: `1px solid ${C.goldDim}`, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <h3 style={{ margin: 0, fontSize: '0.7rem', letterSpacing: '0.15em', textTransform: 'uppercase', color: C.goldDim }}>
-            » Enemies
+            » {room.type === 'TreasureChest' ? 'Treasure' : 'Enemies'}
           </h3>
 
-          {room.enemies.length === 0 ? (
+          {room.type === 'TreasureChest' ? (
+            <div style={{
+              padding: '1.2rem',
+              border: `1px solid ${C.goldDim}`,
+              background: 'rgba(201,168,76,0.06)',
+              borderRadius: 3,
+              textAlign: 'center',
+            }}>
+              <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>📦</div>
+              <p style={{ color: C.gold, fontFamily: C.font, fontSize: '0.75rem', margin: 0, letterSpacing: '0.08em' }}>
+                Treasure Chest
+              </p>
+              <p style={{ color: C.white, fontFamily: C.font, fontSize: '0.65rem', margin: '0.4rem 0 0', opacity: 0.7 }}>
+                Gold coins were distributed to the party!
+              </p>
+            </div>
+          ) : room.enemies.length === 0 ? (
             <p style={{ color: C.gray, fontSize: '0.75rem' }}>No enemies.</p>
           ) : (
             room.enemies.map(e => (

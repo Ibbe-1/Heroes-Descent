@@ -4,6 +4,9 @@
 // Every time the server sends a "GameStateUpdate" SignalR message, the payload
 // matches the GameState interface below. The Phaser scene and React HUD both
 // read from this same object, so there's only one source of truth per frame.
+//
+// When adding or changing a field on the C# side, update the matching interface
+// here to keep the two in sync — TypeScript won't catch a missing field at runtime.
 
 export type HeroClass = 'Warrior' | 'Wizard' | 'Archer';
 
@@ -21,9 +24,9 @@ export interface EnemyState {
 }
 
 export interface RoomState {
-  type: 'Normal' | 'Elite' | 'Boss';
+  type: 'Normal' | 'Elite' | 'Boss' | 'TreasureChest';
   enemies: EnemyState[];
-  isCleared: boolean;  // true when every enemy is dead
+  isCleared: boolean;
 }
 
 // One player in the session, including all info needed to render their HUD card
@@ -52,6 +55,8 @@ export interface PlayerState {
   // World position — updated ~10 times per second via EnemyAiService broadcasts.
   x: number;
   y: number;
+
+  gold: number;
 }
 
 // The full game state sent to all clients after every significant event.

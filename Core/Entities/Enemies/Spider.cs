@@ -13,5 +13,6 @@ public class Spider : Enemy
         Attack = 8;
         Defense = 2;
         ExperienceReward = 15;
+        GoldReward = 3;
     }
 }

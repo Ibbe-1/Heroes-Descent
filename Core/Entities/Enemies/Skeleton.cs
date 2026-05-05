@@ -11,6 +11,7 @@ public class Skeleton : Enemy
         Attack = 12;
         Defense = 5;
         ExperienceReward = 25;
+        GoldReward = 4;
     }
 
     public override int TakeDamage(int incomingDamage)

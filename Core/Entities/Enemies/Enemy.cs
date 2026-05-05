@@ -8,6 +8,9 @@ public abstract class Enemy
     public int Attack { get; protected set; }
     public int Defense { get; protected set; }
     public int ExperienceReward { get; protected set; }
+    // Gold dropped when this enemy is killed. Kept separate from XP so the
+    // shop can price items independently of how much combat experience they grant.
+    public int GoldReward { get; protected set; }
     public float MovementSpeed { get; protected set; } = 70f;
 
     public bool IsAlive => Health > 0;
@@ -28,5 +31,6 @@ public abstract class Enemy
         Attack += floorBonus * 2;
         Defense += floorBonus;
         ExperienceReward += floorBonus * 10;
+        GoldReward       += floorBonus * 2;  // gold scales more slowly than XP — deeper floors shouldn't feel like infinite wealth
     }
 }
