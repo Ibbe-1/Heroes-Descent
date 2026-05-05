@@ -26,8 +26,9 @@ public record GameStateDto(
 // Describes the room the party is currently in.
 public record RoomDto(
     string Type,               // "Normal", "Elite", "Boss", or "TreasureChest"
-    List<EnemyDto> Enemies,    // empty for TreasureChest rooms
-    bool IsCleared             // true when all enemies are dead; always true for TreasureChest
+    List<EnemyDto> Enemies,
+    bool IsCleared,            // true when all enemies are dead — enables advance button
+    int ChestGold              // gold inside the chest; 0 for non-TreasureChest rooms
 );
 
 // One enemy in the current room.

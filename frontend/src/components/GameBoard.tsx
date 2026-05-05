@@ -3,10 +3,12 @@
 // Responsibilities:
 //   - Header bar: floor label, room type badge, room counter, session code, leave button.
 //   - Left panel: enemy list with health bars and per-enemy attack buttons;
-//     replaced by a treasure chest panel when the current room is a TreasureChest.
+//     TreasureChest rooms also show a chest card (locked → open) beneath the guardian.
 //   - Right panel: scrolling combat log fed from server-pushed state.
 //   - Bottom panel: one PlayerCard per party member showing HP, resource bar,
 //     gold balance, and (for the local player) the ability button.
+//   - Loot window: modal overlay that appears once when a chest is opened, showing
+//     gold and item slots. Item slots are empty for now; wired up when the shop lands.
 //   - End states: full-screen VICTORY and DEFEATED overlays.
 //
 // This component does NOT own game state — it receives a GameState snapshot as a
@@ -180,6 +182,10 @@ export default function GameBoard({ state, userId, engine, sessionCode, onLeave 
   const logRef = useRef<HTMLDivElement>(null);
   const attackCooldownUntilRef = useRef<Record<string, number>>({});
   const [, tick] = useState(0);
+  const [lootWindowOpen, setLootWindowOpen] = useState(false);
+  // Tracks which room index last triggered the loot window so repeated server
+  // broadcasts after the chest opens don't re-show it on every tick.
+  const lastChestRoomRef = useRef(-1);
 
   useEffect(() => {
     const id = setInterval(() => tick(n => n + 1), 100);
@@ -189,6 +195,18 @@ export default function GameBoard({ state, userId, engine, sessionCode, onLeave 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [state.log]);
+
+  const room = state.currentRoom;
+  useEffect(() => {
+    if (
+      room.type === 'TreasureChest' &&
+      room.isCleared &&
+      state.currentRoomIndex !== lastChestRoomRef.current
+    ) {
+      lastChestRoomRef.current = state.currentRoomIndex;
+      setLootWindowOpen(true);
+    }
+  }, [room.isCleared, room.type, state.currentRoomIndex]);
 
   const me = state.players.find(p => p.userId === userId);
   const others = state.players.filter(p => p.userId !== userId);
@@ -209,7 +227,6 @@ export default function GameBoard({ state, userId, engine, sessionCode, onLeave 
   const now = Date.now();
   const attackCooldownRemaining = Math.max(0, (attackCooldownUntilRef.current[userId] ?? 0) - now);
   const onAttackCooldown = attackCooldownRemaining > 0;
-  const room = state.currentRoom;
 
   // ── End states ──
   if (state.isVictory) {
@@ -263,23 +280,7 @@ export default function GameBoard({ state, userId, engine, sessionCode, onLeave 
             » {room.type === 'TreasureChest' ? 'Treasure' : 'Enemies'}
           </h3>
 
-          {room.type === 'TreasureChest' ? (
-            <div style={{
-              padding: '1.2rem',
-              border: `1px solid ${C.goldDim}`,
-              background: 'rgba(201,168,76,0.06)',
-              borderRadius: 3,
-              textAlign: 'center',
-            }}>
-              <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>📦</div>
-              <p style={{ color: C.gold, fontFamily: C.font, fontSize: '0.75rem', margin: 0, letterSpacing: '0.08em' }}>
-                Treasure Chest
-              </p>
-              <p style={{ color: C.white, fontFamily: C.font, fontSize: '0.65rem', margin: '0.4rem 0 0', opacity: 0.7 }}>
-                Gold coins were distributed to the party!
-              </p>
-            </div>
-          ) : room.enemies.length === 0 ? (
+          {room.enemies.length === 0 ? (
             <p style={{ color: C.gray, fontSize: '0.75rem' }}>No enemies.</p>
           ) : (
             room.enemies.map(e => (
@@ -324,6 +325,33 @@ export default function GameBoard({ state, userId, engine, sessionCode, onLeave 
                 </div>
               </div>
             ))
+          )}
+
+          {room.type === 'TreasureChest' && (
+            <div style={{
+              padding: '0.9rem 1rem',
+              border: `1px solid ${room.isCleared ? C.goldDim : 'rgba(255,255,255,0.1)'}`,
+              background: room.isCleared ? 'rgba(201,168,76,0.06)' : 'transparent',
+              borderRadius: 3,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+              opacity: room.isCleared ? 1 : 0.45,
+            }}>
+              <span style={{ fontSize: '1.4rem', flexShrink: 0 }}>
+                {room.isCleared ? '📦' : '🔒'}
+              </span>
+              <div>
+                <p style={{ color: room.isCleared ? C.gold : C.gray, fontFamily: C.font, fontSize: '0.72rem', margin: 0, letterSpacing: '0.06em' }}>
+                  {room.isCleared ? 'Treasure Chest — Opened' : 'Treasure Chest — Locked'}
+                </p>
+                <p style={{ color: C.gray, fontFamily: C.font, fontSize: '0.62rem', margin: '0.25rem 0 0' }}>
+                  {room.isCleared
+                    ? `The party claimed ${room.chestGold}g!`
+                    : `Contains ${room.chestGold}g — defeat the guardian to unlock`}
+                </p>
+              </div>
+            </div>
           )}
 
           <div style={{ marginTop: 'auto' }}>
@@ -396,6 +424,74 @@ export default function GameBoard({ state, userId, engine, sessionCode, onLeave 
           ))}
         </div>
       </div>
+
+      {/* Loot window — appears once when a chest is opened */}
+      {lootWindowOpen && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.78)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 100,
+        }}>
+          <div style={{
+            background: C.bg,
+            border: `1px solid ${C.goldDim}`,
+            borderRadius: 4,
+            padding: '2rem',
+            width: 340,
+            fontFamily: C.font,
+          }}>
+            <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+              <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📦</div>
+              <h2 style={{ color: C.gold, margin: 0, fontSize: '0.85rem', letterSpacing: '0.2em', textTransform: 'uppercase' }}>
+                Chest Opened!
+              </h2>
+            </div>
+
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '1rem',
+              padding: '0.9rem 1rem',
+              border: `1px solid ${C.goldDim}`,
+              background: 'rgba(201,168,76,0.06)',
+              borderRadius: 3,
+              marginBottom: '1.5rem',
+            }}>
+              <span style={{ fontSize: '1.4rem' }}>🪙</span>
+              <div>
+                <p style={{ color: C.gold, margin: 0, fontSize: '1rem', letterSpacing: '0.06em' }}>
+                  {room.chestGold} Gold Coins
+                </p>
+                <p style={{ color: C.gray, margin: '0.2rem 0 0', fontSize: '0.62rem' }}>
+                  Distributed to all party members
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setLootWindowOpen(false)}
+              style={{
+                width: '100%',
+                background: 'transparent',
+                border: `1px solid ${C.goldDim}`,
+                color: C.gold,
+                fontFamily: C.font,
+                fontSize: '0.7rem',
+                letterSpacing: '0.12em',
+                textTransform: 'uppercase',
+                padding: '0.6rem',
+                cursor: 'pointer',
+              }}
+            >
+              ✦ Claim &amp; Close
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );

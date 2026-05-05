@@ -27,6 +27,7 @@ export interface RoomState {
   type: 'Normal' | 'Elite' | 'Boss' | 'TreasureChest';
   enemies: EnemyState[];
   isCleared: boolean;
+  chestGold: number;  // gold inside the chest; 0 for non-TreasureChest rooms
 }
 
 // One player in the session, including all info needed to render their HUD card

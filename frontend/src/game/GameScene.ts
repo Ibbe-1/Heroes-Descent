@@ -9,7 +9,7 @@
 // Phaser listens for them — no shared variables needed.
 
 import Phaser from 'phaser';
-import type { GameState, EnemyState, PlayerState } from '../types/gameTypes';
+import type { GameState, EnemyState, PlayerState, RoomState } from '../types/gameTypes';
 import type { GameEngine } from './gameEngine';
 
 // Room bounds — pixel coordinates that must match RoomBounds.cs on the server.
@@ -86,6 +86,16 @@ export class GameScene extends Phaser.Scene {
   // or enemies are defeated, without rebuilding the entire scene.
   private others = new Map<string, EntitySprites>();
   private enemySprites = new Map<string, EntitySprites & { prevHp: number; dead: boolean }>();
+
+  // Treasure chest sprite — only present in TreasureChest rooms.
+  // Sits at the top-centre of the room; turns gold and becomes clickable once
+  // the guardian is defeated.
+  private chestSprite: {
+    body: Phaser.GameObjects.Rectangle;
+    label: Phaser.GameObjects.Text;
+    hint: Phaser.GameObjects.Text;
+  } | null = null;
+  private chestIsOpen = false;
 
   // Hero class of the local player — set from state updates, used for aim visuals.
   private myHeroClass = '';
@@ -236,6 +246,7 @@ export class GameScene extends Phaser.Scene {
     if (s.currentRoomIndex !== this.lastRoomIndex) {
       this.lastRoomIndex = s.currentRoomIndex;
       this.clearEnemies();
+      this.destroyChest();
       const me = s.players.find(p => p.userId === this.myUserId);
       if (me) { this.localX = me.x; this.localY = me.y; }
     }
@@ -269,6 +280,8 @@ export class GameScene extends Phaser.Scene {
     for (const [id] of this.enemySprites) {
       if (!s.currentRoom.enemies.some(e => e.id === id)) this.destroyEnemy(id);
     }
+
+    this.syncChest(s.currentRoom);
   }
 
   // Create or update the sprite for another player (not the local user).
@@ -488,6 +501,67 @@ export class GameScene extends Phaser.Scene {
       // Small circle at the tip representing the projectile hit-box size.
       this.aimGraphics.strokeCircle(endX, endY, hitR);
     }
+  }
+
+  // ── Treasure chest ───────────────────────────────────────────────────────
+
+  // Creates or updates the chest sprite for TreasureChest rooms.
+  // The chest sits at the top-centre of the room and changes appearance once
+  // the guardian dies — it turns gold and becomes clickable to open the loot window.
+  private syncChest(room: RoomState) {
+    if (room.type !== 'TreasureChest') {
+      this.destroyChest();
+      return;
+    }
+
+    const cx = R.CX;
+    const cy = R.T + 45;
+
+    if (!this.chestSprite) {
+      const body = this.add.rectangle(cx, cy, 44, 32, 0x3d1f0a)
+        .setDepth(7)
+        .setStrokeStyle(1.5, 0x6b4420, 1);
+      const label = this.add.text(cx, cy - 26, 'CHEST', {
+        fontFamily: 'Courier New', fontSize: '11px', color: '#c9a84c',
+      }).setOrigin(0.5, 1).setDepth(8);
+      const hint = this.add.text(cx, cy + 22, 'LOCKED', {
+        fontFamily: 'Courier New', fontSize: '9px', color: '#444444',
+      }).setOrigin(0.5, 0).setDepth(8);
+      this.chestSprite = { body, label, hint };
+    }
+
+    if (room.isCleared && !this.chestIsOpen) {
+      this.chestIsOpen = true;
+      const { body, hint } = this.chestSprite;
+
+      body.setFillStyle(0x7a5512).setStrokeStyle(2, 0xc9a84c, 1);
+      hint.setText('▶ CLICK TO OPEN').setStyle({ color: '#c9a84c' });
+
+      // Pop animation to draw attention when the chest unlocks.
+      this.tweens.add({
+        targets: body, scaleX: 1.25, scaleY: 1.25, duration: 160, yoyo: true,
+      });
+
+      // Slow gold pulse so the chest stands out while waiting to be opened.
+      this.tweens.add({
+        targets: body, alpha: 0.55, duration: 900, yoyo: true, repeat: -1,
+      });
+
+      body.setInteractive({ useHandCursor: true });
+      body.on('pointerover', () => body.setAlpha(1));
+      body.on('pointerout',  () => { /* let the pulse tween control alpha */ });
+      body.on('pointerdown', () => this.game.events.emit('openChest'));
+    }
+  }
+
+  private destroyChest() {
+    if (this.chestSprite) {
+      this.chestSprite.body.destroy();
+      this.chestSprite.label.destroy();
+      this.chestSprite.hint.destroy();
+      this.chestSprite = null;
+    }
+    this.chestIsOpen = false;
   }
 
   // ── Cleanup ───────────────────────────────────────────────────────────────

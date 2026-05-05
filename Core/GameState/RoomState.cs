@@ -15,8 +15,8 @@ public class RoomState
     // called while still on a chest room (e.g. a client sending a duplicate message).
     public bool ChestOpened { get; private set; }
 
-    // For TreasureChest rooms the enemy list is always empty, so this returns
-    // true immediately — the advance button is usable as soon as the room is entered.
+    // True once every enemy in the room is dead. For TreasureChest rooms
+    // this means the ChestGuardian has been defeated.
     public bool IsCleared => Enemies.All(e => !e.Enemy.IsAlive);
 
     public RoomState(int index, RoomType type, List<EnemyInstance> enemies, int chestGold = 0)

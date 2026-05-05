@@ -223,16 +223,6 @@ public class GameHub : Hub
 
                 var room = session.CurrentRoom;
                 session.AddLog($"» Room {session.CurrentRoomIndex + 1}/{session.Rooms.Count} — {room.Type}");
-
-                if (room.Type == RoomType.TreasureChest && !room.ChestOpened)
-                {
-                    room.OpenChest();
-                    foreach (var p in session.Players)
-                    {
-                        p.Gold += room.ChestGold;
-                        session.AddLog($"✦ {p.Username} found {room.ChestGold} gold coins in the chest!");
-                    }
-                }
             }
 
             dto = _game.BuildDto(session);

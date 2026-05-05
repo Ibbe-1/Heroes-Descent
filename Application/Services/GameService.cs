@@ -54,7 +54,11 @@ public class GameService
             player.Gold += gold;
             log.Add($"{nearest.Enemy.Name} is defeated! (+{gold}g)");
             player.Hero.GainExperience(nearest.Enemy.ExperienceReward);
-            if (session.CurrentRoom.IsCleared) log.Add("Room cleared — advance when ready.");
+            if (session.CurrentRoom.IsCleared)
+            {
+                TryOpenChest(session, log);
+                log.Add("Room cleared — advance when ready.");
+            }
         }
 
         return (true, log);
@@ -102,7 +106,10 @@ public class GameService
                 log.Add($"{player.Username} looted {wizardGold} gold!");
             }
             if (session.CurrentRoom.IsCleared && alive.Count > 0)
+            {
+                TryOpenChest(session, log);
                 log.Add("Room cleared — advance when ready.");
+            }
         }
         else if (player.Hero is Archer archer)
         {
@@ -130,7 +137,10 @@ public class GameService
                 log.Add($"{player.Username} looted {archerGold} gold!");
             }
             if (session.CurrentRoom.IsCleared)
+            {
+                TryOpenChest(session, log);
                 log.Add("Room cleared — advance when ready.");
+            }
         }
 
         return (log.Count > 0, log);
@@ -189,9 +199,15 @@ public class GameService
 
         if (!target.Enemy.IsAlive)
         {
-            log.Add($"{target.Enemy.Name} is defeated!");
+            int gold = target.Enemy.GoldReward;
+            player.Gold += gold;
+            log.Add($"{target.Enemy.Name} is defeated! (+{gold}g)");
             player.Hero.GainExperience(target.Enemy.ExperienceReward);
-            if (session.CurrentRoom.IsCleared) log.Add("Room cleared — advance when ready.");
+            if (session.CurrentRoom.IsCleared)
+            {
+                TryOpenChest(session, log);
+                log.Add("Room cleared — advance when ready.");
+            }
         }
 
         return (true, log);
@@ -361,7 +377,8 @@ public class GameService
                 e.Enemy.IsAlive,
                 e.X, e.Y           // position so the Phaser scene can place the sprite
             )).ToList(),
-            room.IsCleared
+            room.IsCleared,
+            room.ChestGold
         );
 
         var players = session.Players.Select(p =>
@@ -401,6 +418,22 @@ public class GameService
     {
         float dx = x2 - x1, dy = y2 - y1;
         return MathF.Sqrt(dx * dx + dy * dy);
+    }
+
+    // If the current room is a TreasureChest and its guardian was just killed,
+    // opens the chest and distributes gold to every player in the session.
+    // The ChestOpened flag prevents a second payout if this is somehow called twice.
+    private static void TryOpenChest(GameSession session, List<string> log)
+    {
+        var room = session.CurrentRoom;
+        if (room.Type != RoomType.TreasureChest || room.ChestOpened) return;
+
+        room.OpenChest();
+        foreach (var p in session.Players)
+        {
+            p.Gold += room.ChestGold;
+            log.Add($"✦ {p.Username} claims {room.ChestGold} gold from the chest!");
+        }
     }
 
     // Returns the resource bar values for any hero class under a common interface,

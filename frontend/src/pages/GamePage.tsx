@@ -114,6 +114,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
   // a new GameStateUpdate message. React re-renders the HUD with the new data,
   // and a separate useEffect forwards the state into the Phaser scene.
   const [gameState, setGameState]     = useState<GameState | null>(null);
+  const [lootWindowOpen, setLootWindowOpen] = useState(false);
 
   // Refs hold the Phaser game instance and the SignalR engine so they persist
   // across re-renders without triggering extra effects.
@@ -162,6 +163,9 @@ export default function GamePage({ username, userId, onBack }: Props) {
     game.events.once('ready', send);
     setTimeout(send, 100);
 
+    // Fired by GameScene when the player clicks the opened treasure chest.
+    game.events.on('openChest', () => setLootWindowOpen(true));
+
     // Destroy the Phaser game when the component unmounts or phase changes away.
     // true = also remove the <canvas> element from the DOM.
     return () => {
@@ -179,6 +183,9 @@ export default function GamePage({ username, userId, onBack }: Props) {
       gameRef.current.events.emit('stateUpdate', gameState);
     }
   }, [gameState]);
+
+  // Close the loot window whenever the party advances to a new room.
+  useEffect(() => { setLootWindowOpen(false); }, [gameState?.currentRoomIndex]);
 
   // Disconnect SignalR when the component is removed from the React tree.
   useEffect(() => () => { engineRef.current?.disconnect(); }, []);
@@ -262,7 +269,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
               <>
                 {/* Color-coded room type label */}
                 <span style={{ color: room?.type === 'Boss' ? RED : room?.type === 'Elite' ? '#f39c12' : GOLD }}>
-                  {room?.type === 'Boss' ? '☠ BOSS' : room?.type === 'Elite' ? '★ ELITE' : '○ NORMAL'}
+                  {room?.type === 'Boss' ? '☠ BOSS' : room?.type === 'Elite' ? '★ ELITE' : room?.type === 'TreasureChest' ? '✦ CHEST' : '○ NORMAL'}
                 </span>
                 <span style={{ color: GRAY, marginLeft: 8 }}>Room {(state.currentRoomIndex + 1)}/{state.totalRooms}</span>
               </>
@@ -359,6 +366,62 @@ export default function GamePage({ username, userId, onBack }: Props) {
             </div>
           )}
         </div>
+
+        {/* Loot window — shown when the player clicks the opened treasure chest */}
+        {lootWindowOpen && room && (
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: 'rgba(0,0,0,0.78)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 50, fontFamily: F,
+          }}>
+            <div style={{
+              background: BG,
+              border: `1px solid ${GOLD_DIM}`,
+              borderRadius: 4,
+              padding: '2rem',
+              width: 320,
+            }}>
+              <div style={{ textAlign: 'center', marginBottom: '1.4rem' }}>
+                <div style={{ fontSize: '2rem', marginBottom: '0.4rem' }}>📦</div>
+                <div style={{ color: GOLD, fontSize: 13, letterSpacing: '0.2em', textTransform: 'uppercase' }}>
+                  Chest Opened!
+                </div>
+              </div>
+
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 12,
+                padding: '0.8rem 1rem',
+                border: `1px solid ${GOLD_DIM}`,
+                background: 'rgba(201,168,76,0.06)',
+                borderRadius: 3,
+                marginBottom: '1.4rem',
+              }}>
+                <span style={{ fontSize: '1.3rem' }}>🪙</span>
+                <div>
+                  <div style={{ color: GOLD, fontSize: 14, letterSpacing: '0.06em' }}>
+                    {room.chestGold} Gold Coins
+                  </div>
+                  <div style={{ color: GRAY, fontSize: 10, marginTop: 3 }}>
+                    Distributed to all party members
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setLootWindowOpen(false)}
+                style={{
+                  width: '100%', background: 'transparent',
+                  border: `1px solid ${GOLD_DIM}`, color: GOLD,
+                  fontFamily: F, fontSize: 10, letterSpacing: '0.12em',
+                  textTransform: 'uppercase', padding: '0.5rem', cursor: 'pointer',
+                }}
+              >
+                ✦ Close
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
