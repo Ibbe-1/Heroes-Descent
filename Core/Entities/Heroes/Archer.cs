@@ -46,7 +46,7 @@ public class Archer : Hero
 
     public override string AbilityName => "Multi-Shot";
     public override string AbilityDescription =>
-        $"Costs {AbilityCost} Energy. Fires at 2 different enemies for full attack damage each.";
+        $"Costs {AbilityCost} Energy. Fires 3 arrows in a spread toward the cursor.";
 
     // Must be called by the game loop every tick.
     // Adds 10 Energy every 2 seconds until the Energy bar is full.
@@ -70,14 +70,13 @@ public class Archer : Hero
 
     public override bool CanUseAbility() => CurrentEnergy >= AbilityCost;
 
-    // Fires arrows at 2 separate enemies.
-    // Returns 2 (the target count); the game engine picks 2 enemies and
-    // calls BasicAttack() against each one, so each arrow can independently crit.
+    // Fires 3 arrows in a directional spread (±15° from the aim direction).
+    // Returns 3 (the arrow count); the game engine ray-casts each independently.
     public override int UseAbility()
     {
         if (CurrentEnergy < AbilityCost) return 0;
         CurrentEnergy -= AbilityCost;
-        return 2;
+        return 3;
     }
 
     // On level-up, Archer gains HP, BaseAttack, and Dexterity.

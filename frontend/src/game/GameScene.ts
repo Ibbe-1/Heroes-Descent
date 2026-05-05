@@ -76,8 +76,6 @@ export class GameScene extends Phaser.Scene {
   // Phaser game objects for the local player.
   private myBody!: Phaser.GameObjects.Rectangle;
   private myLabel!: Phaser.GameObjects.Text;
-  // Semi-transparent circle that shows the player's attack range visually.
-  private rangeCircle!: Phaser.GameObjects.Arc;
   // Single shared Graphics object redrawn every frame for all HP bars.
   private hpBars!: Phaser.GameObjects.Graphics;
 
@@ -89,6 +87,9 @@ export class GameScene extends Phaser.Scene {
 
   // Hero class of the local player — set from state updates, used for aim visuals.
   private myHeroClass = '';
+
+  // Tracks last-known HP per player so we can detect damage taken between updates.
+  private prevPlayerHp = new Map<string, number>();
 
   // Graphics object redrawn every frame to show the directional aim indicator.
   private aimGraphics!: Phaser.GameObjects.Graphics;
@@ -116,10 +117,6 @@ export class GameScene extends Phaser.Scene {
 
     // Aim indicator redrawn each frame — shows cone (Warrior) or aim line (Archer/Wizard).
     this.aimGraphics = this.add.graphics().setDepth(6);
-
-    // Faint gold circle centered on the player — only visible for Warrior (melee range hint).
-    // Hidden by default; applyState() shows it once hero class is known.
-    this.rangeCircle = this.add.arc(R.CX, R.CY, ATTACK_RANGE, 0, 360, false, 0xc9a84c, 0.07).setDepth(5).setVisible(false);
 
     // The local player's rectangle and name tag. setDepth() controls draw order —
     // higher values appear on top. Player (10) is above enemies (8) and floor (0).
@@ -188,7 +185,6 @@ export class GameScene extends Phaser.Scene {
     // Move all objects that track the player's position.
     this.myBody.setPosition(this.localX, this.localY);
     this.myLabel.setPosition(this.localX, this.localY - 22);
-    this.rangeCircle.setPosition(this.localX, this.localY);
   }
 
   // Throttle position sends to every 50ms (20 updates/sec) to avoid flooding
@@ -205,23 +201,36 @@ export class GameScene extends Phaser.Scene {
   // spamming attacks faster than the server cooldown allows.
   private handleInput() {
     if (!this.engine || !this.state) return;
+
     if (Phaser.Input.Keyboard.JustDown(this.kSpace)) {
       const ptr = this.input.activePointer;
       const dx = ptr.worldX - this.localX;
       const dy = ptr.worldY - this.localY;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > 0) {
-        const nx = dx / dist;
-        const ny = dy / dist;
+      const nx = dist > 0 ? dx / dist : 0;
+      const ny = dist > 0 ? dy / dist : -1;
+
+      if (this.myHeroClass === 'Warrior') {
+        // Warrior uses nearest-target so the attack reliably hits the closest enemy
+        // regardless of exact cursor angle — removes the "missed cone" confusion.
+        this.engine.attackNearest();
+        this.flashAttack(nx, ny, ATTACK_RANGE);
+      } else if (dist > 0) {
         const maxRange = CLASS_RANGE[this.myHeroClass] ?? ATTACK_RANGE;
-        // Travel to cursor position, capped at class max range.
-        const aimDist = Math.min(dist, maxRange);
         this.engine.attackDirectional(nx, ny);
-        this.flashAttack(nx, ny, aimDist);
+        this.flashAttack(nx, ny, Math.min(dist, maxRange));
       }
     }
+
     if (Phaser.Input.Keyboard.JustDown(this.kQ)) {
-      this.engine.useAbility();
+      const ptr = this.input.activePointer;
+      const dx = ptr.worldX - this.localX;
+      const dy = ptr.worldY - this.localY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const nx = dist > 0 ? dx / dist : 0;
+      const ny = dist > 0 ? dy / dist : -1;
+      this.engine.useAbility(nx, ny);
+      this.flashAbility(nx, ny);
     }
   }
 
@@ -236,9 +245,13 @@ export class GameScene extends Phaser.Scene {
     if (s.currentRoomIndex !== this.lastRoomIndex) {
       this.lastRoomIndex = s.currentRoomIndex;
       this.clearEnemies();
+      this.prevPlayerHp.clear();
       const me = s.players.find(p => p.userId === this.myUserId);
       if (me) { this.localX = me.x; this.localY = me.y; }
     }
+
+    // Check for HP drops before overwriting this.state so we can compare old vs new.
+    this.showSkeletonProjectiles(s);
 
     this.state = s;
 
@@ -249,8 +262,6 @@ export class GameScene extends Phaser.Scene {
       this.myHeroClass = me.heroClass;
       const col = CLASS_COLOR[me.heroClass] ?? 0x3498db;
       this.myBody.setFillStyle(me.isAlive ? col : 0x555555);
-      // Range circle only makes sense for Warrior (melee) — ranged classes get the aim line.
-      this.rangeCircle.setVisible(me.heroClass === 'Warrior' && me.isAlive);
     }
 
     // Sync other players: create sprites for new arrivals, update positions,
@@ -413,11 +424,19 @@ export class GameScene extends Phaser.Scene {
     const endY = this.localY + ny * aimDist;
 
     if (this.myHeroClass === 'Warrior') {
-      // Expanding golden arc — communicates a melee swing without a projectile.
-      const ring = this.add.arc(this.localX, this.localY, ATTACK_RANGE * 0.6, 0, 360, false, 0xc9a84c, 0.4).setDepth(15);
+      // Filled 90° cone in the aim direction — matches the server's ±45° hit zone.
+      const atkAngle = Math.atan2(ny, nx);
+      const half = Math.PI / 4;
+      const g = this.add.graphics().setDepth(15);
+      g.fillStyle(0xc9a84c, 0.45);
+      g.beginPath();
+      g.moveTo(this.localX, this.localY);
+      g.arc(this.localX, this.localY, ATTACK_RANGE, atkAngle - half, atkAngle + half, false);
+      g.closePath();
+      g.fillPath();
       this.tweens.add({
-        targets: ring, alpha: 0, scaleX: 1.5, scaleY: 1.5, duration: 250,
-        onComplete: () => ring.destroy(),
+        targets: g, alpha: 0, duration: 250,
+        onComplete: () => g.destroy(),
       });
     } else if (this.myHeroClass === 'Archer') {
       // Thin green rectangle that flies toward the cursor — arrow in flight.
@@ -433,6 +452,42 @@ export class GameScene extends Phaser.Scene {
       this.tweens.add({
         targets: orb, x: endX, y: endY, duration: 420, alpha: 0.15,
         onComplete: () => orb.destroy(),
+      });
+    }
+  }
+
+  // Class-specific Q ability visual triggered immediately on Q press.
+  private flashAbility(nx: number, ny: number) {
+    if (this.myHeroClass === 'Warrior') {
+      // Shield Block: expanding golden ring — communicates a defensive stance.
+      const ring = this.add.arc(this.localX, this.localY, 22, 0, 360, false, 0xc9a84c, 0.75).setDepth(15);
+      this.tweens.add({
+        targets: ring, scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 420,
+        onComplete: () => ring.destroy(),
+      });
+    } else if (this.myHeroClass === 'Archer') {
+      // Multi-Shot: three arrows in a ±15° spread — must match server logic.
+      const centerAngle = Math.atan2(ny, nx);
+      const spread = Math.PI / 12;
+      const range  = CLASS_RANGE['Archer'];
+      [-spread, 0, spread].forEach(offset => {
+        const angle = centerAngle + offset;
+        const adx = Math.cos(angle);
+        const ady = Math.sin(angle);
+        const arrow = this.add.rectangle(this.localX, this.localY, 18, 3, 0x27ae60).setDepth(15);
+        arrow.rotation = angle;
+        this.tweens.add({
+          targets: arrow, x: this.localX + adx * range, y: this.localY + ady * range,
+          duration: 210,
+          onComplete: () => arrow.destroy(),
+        });
+      });
+    } else if (this.myHeroClass === 'Wizard') {
+      // Fireball: ring expands outward to convey area damage on all enemies.
+      const ring = this.add.arc(this.localX, this.localY, 18, 0, 360, false, 0x9b59b6, 0.85).setDepth(15);
+      this.tweens.add({
+        targets: ring, scaleX: 22, scaleY: 22, alpha: 0, duration: 580,
+        onComplete: () => ring.destroy(),
       });
     }
   }
@@ -487,6 +542,41 @@ export class GameScene extends Phaser.Scene {
       this.aimGraphics.lineBetween(this.localX, this.localY, endX, endY);
       // Small circle at the tip representing the projectile hit-box size.
       this.aimGraphics.strokeCircle(endX, endY, hitR);
+    }
+  }
+
+  // Animate a bone projectile from any alive Skeleton that is in attack range of
+  // a player whose HP just dropped. Called before this.state is updated so we can
+  // compare the incoming snapshot against the previous one.
+  private showSkeletonProjectiles(s: GameState) {
+    const skeletons = s.currentRoom.enemies.filter(e => e.name === 'Skeleton' && e.isAlive);
+    if (!skeletons.length) return;
+
+    for (const player of s.players) {
+      const prevHp = this.prevPlayerHp.get(player.userId) ?? player.currentHp;
+      this.prevPlayerHp.set(player.userId, player.currentHp);
+
+      if (!player.isAlive || player.currentHp >= prevHp) continue;
+
+      // Resolve where the player is on screen.
+      const targetX = player.userId === this.myUserId
+        ? this.localX
+        : (this.others.get(player.userId)?.body.x ?? player.x);
+      const targetY = player.userId === this.myUserId
+        ? this.localY
+        : (this.others.get(player.userId)?.body.y ?? player.y);
+
+      // Fire a visual projectile from every skeleton within shooting range.
+      for (const sk of skeletons) {
+        const dx = targetX - sk.x;
+        const dy = targetY - sk.y;
+        if (dx * dx + dy * dy > 260 * 260) continue;  // slightly beyond ProjectileRange
+        const proj = this.add.arc(sk.x, sk.y, 5, 0, 360, false, 0xbdc3c7, 0.9).setDepth(15);
+        this.tweens.add({
+          targets: proj, x: targetX, y: targetY, duration: 280,
+          onComplete: () => proj.destroy(),
+        });
+      }
     }
   }
 

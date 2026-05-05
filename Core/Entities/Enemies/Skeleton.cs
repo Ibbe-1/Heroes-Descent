@@ -2,10 +2,13 @@ namespace Heroes_Descent.Core.Entities.Enemies;
 
 public class Skeleton : Enemy
 {
+    public override bool ShootsProjectiles => true;
+    public override float ProjectileRange => 250f;
+
     public Skeleton()
     {
         Name = "Skeleton";
-        MovementSpeed = 60f;
+        MovementSpeed = 55f;
         MaxHealth = 50;
         Health = MaxHealth;
         Attack = 12;

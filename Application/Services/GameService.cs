@@ -63,7 +63,7 @@ public class GameService
     // Called when a player presses Q.
     // Each hero class has a completely different ability, so we switch on the
     // concrete type and call the appropriate logic.
-    public (bool acted, List<string> log) PlayerUseAbility(GameSession session, string userId)
+    public (bool acted, List<string> log) PlayerUseAbility(GameSession session, string userId, float dirX = 0f, float dirY = 0f)
     {
         var player = session.Players.FirstOrDefault(p => p.UserId == userId);
         if (player is null || !player.Hero.IsAlive)   return (false, []);
@@ -106,24 +106,44 @@ public class GameService
         }
         else if (player.Hero is Archer archer)
         {
-            // Archer: Multi-Shot fires at 2 random enemies.
-            // UseAbility() spends Energy and returns how many targets to hit.
-            int targetCount = archer.UseAbility();
-            var targets = alive.OrderBy(_ => Random.Shared.Next()).Take(targetCount).ToList();
+            // Archer: Multi-Shot fires 3 arrows in a ±15° spread from the aim direction.
+            // Each arrow is an independent ray-cast, so a single arrow can crit.
+            int arrowCount = archer.UseAbility();
+
+            float len = MathF.Sqrt(dirX * dirX + dirY * dirY);
+            if (len < 0.001f) { dirX = 0f; dirY = -1f; }  // default: aim up
+            else { dirX /= len; dirY /= len; }
+
+            float centerAngle = MathF.Atan2(dirY, dirX);
+            float spread      = MathF.PI / 12f;  // 15° between arrows
+
             int archerGold = 0;
-            foreach (var e in targets)
+            var hitEnemies = new HashSet<EnemyInstance>();
+
+            for (int i = 0; i < arrowCount; i++)
             {
-                var raw    = archer.BasicAttack();            // rolls for crit internally
-                bool isCrit = raw == archer.BaseAttack * 2;  // detect crit by comparing to base
-                var actual  = e.Enemy.TakeDamage(raw);
-                log.Add($"Arrow pierces {e.Enemy.Name} for {actual} dmg{(isCrit ? " [CRIT!]" : "")}");
-                if (!e.Enemy.IsAlive)
+                float angle = centerAngle + (i - 1) * spread;  // –15°, 0°, +15°
+                float rdx   = MathF.Cos(angle);
+                float rdy   = MathF.Sin(angle);
+
+                var target = FindRayTarget(alive, player.X, player.Y, rdx, rdy,
+                    RoomBounds.ArcherAttackRange, RoomBounds.ArcherHitRadius);
+
+                if (target is null || hitEnemies.Contains(target)) continue;
+                hitEnemies.Add(target);
+
+                var raw    = archer.BasicAttack();
+                bool isCrit = raw == archer.BaseAttack * 2;
+                var actual  = target.Enemy.TakeDamage(raw);
+                log.Add($"Arrow pierces {target.Enemy.Name} for {actual} dmg{(isCrit ? " [CRIT!]" : "")}");
+                if (!target.Enemy.IsAlive)
                 {
-                    log.Add($"{e.Enemy.Name} is defeated!");
-                    player.Hero.GainExperience(e.Enemy.ExperienceReward);
-                    archerGold += e.Enemy.GoldReward;
+                    log.Add($"{target.Enemy.Name} is defeated!");
+                    player.Hero.GainExperience(target.Enemy.ExperienceReward);
+                    archerGold += target.Enemy.GoldReward;
                 }
             }
+
             if (archerGold > 0)
             {
                 player.Gold += archerGold;
@@ -272,9 +292,11 @@ public class GameService
             float dy   = target.Y - inst.Y;
             float dist = MathF.Sqrt(dx * dx + dy * dy);
 
-            // Stop moving once the enemy is practically on top of the player
-            // to avoid jitter when they're already in melee range.
-            if (dist < 30f) continue;
+            // Ranged enemies stop when inside their shoot range; melee enemies stop at 30 px.
+            float stopDist = inst.Enemy.ShootsProjectiles
+                ? inst.Enemy.ProjectileRange - 30f
+                : 30f;
+            if (dist < stopDist) continue;
 
             // Normalise the direction vector (dx/dist, dy/dist) so diagonal
             // movement isn't faster than cardinal movement, then scale by speed.
@@ -306,9 +328,12 @@ public class GameService
 
         foreach (var inst in session.CurrentRoom.Enemies.Where(e => e.Enemy.IsAlive))
         {
-            // Only attack players within range — kiting is a valid strategy.
+            // Ranged enemies shoot from their projectile range; melee use EnemyAttackRange.
+            float atkRange = inst.Enemy.ShootsProjectiles && inst.Enemy.ProjectileRange > 0f
+                ? inst.Enemy.ProjectileRange
+                : RoomBounds.EnemyAttackRange;
             var target = alive
-                .Where(p => Dist(p.X, p.Y, inst.X, inst.Y) <= RoomBounds.EnemyAttackRange)
+                .Where(p => Dist(p.X, p.Y, inst.X, inst.Y) <= atkRange)
                 .MinBy(p => Dist(p.X, p.Y, inst.X, inst.Y));
 
             if (target is null) continue;
