@@ -11,6 +11,6 @@ public class BossEnemy : Enemy
         Attack = 20 + (floorNumber * 4);
         Defense = 12 + (floorNumber * 2);
         ExperienceReward = 200 + (floorNumber * 50);
-        GoldReward = 50 + (floorNumber * 10);
+        GoldReward = 51 + (floorNumber * 10);
     }
 }
