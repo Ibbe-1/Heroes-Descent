@@ -87,6 +87,8 @@ export class GameScene extends Phaser.Scene {
   private kSpace!: Phaser.Input.Keyboard.Key;
   private kQ!:     Phaser.Input.Keyboard.Key;
 
+  private roomDecorations: Phaser.GameObjects.GameObject[] = [];
+
   constructor() { super({ key: 'GameScene' }); }
 
   // ── Phaser lifecycle: preload ──────────────────────────────────────────────
@@ -125,7 +127,7 @@ export class GameScene extends Phaser.Scene {
   // ── Phaser lifecycle: create ───────────────────────────────────────────────
 
   create() {
-    this.drawRoom();
+    this.drawRoom(0);
     this.createWarriorAnims();
     this.createWizardAnims();
     this.createArcherAnims();
@@ -342,6 +344,9 @@ export class GameScene extends Phaser.Scene {
     if (s.currentRoomIndex !== this.lastRoomIndex) {
       this.lastRoomIndex = s.currentRoomIndex;
       this.clearEnemies();
+      this.clearRoomVisuals();
+      this.drawRoom(s.currentRoomIndex, s.currentRoom.type);
+      this.showRoomBanner(s.currentRoomIndex, s.currentRoom.type);
       this.prevPlayerHp.clear();
       const me = s.players.find(p => p.userId === this.myUserId);
       if (me) { this.localX = me.x; this.localY = me.y; }
@@ -557,25 +562,211 @@ export class GameScene extends Phaser.Scene {
 
   // ── Room drawing ───────────────────────────────────────────────────────────
 
-  private drawRoom() {
+  private drawRoom(roomIndex = 0, roomType?: string) {
     const g = this.add.graphics().setDepth(0);
-    g.fillStyle(0x0d0b08);
+    this.roomDecorations.push(g);
+
+    // Canvas background
+    g.fillStyle(0x0b0906);
     g.fillRect(0, 0, 960, 640);
 
-    for (let tx = R.L; tx < R.R; tx += TILE) {
-      for (let ty = R.T; ty < R.B; ty += TILE) {
-        const w    = Math.min(TILE, R.R - tx);
-        const h    = Math.min(TILE, R.B - ty);
-        const even = (Math.floor((tx - R.L) / TILE) + Math.floor((ty - R.T) / TILE)) % 2 === 0;
-        g.fillStyle(even ? 0x2a1f14 : 0x231a10);
+    // Stone wall border fill
+    g.fillStyle(0x141008);
+    g.fillRect(0, 0, 960, R.T);
+    g.fillRect(0, R.B, 960, 640 - R.B);
+    g.fillRect(0, R.T, R.L, R.H);
+    g.fillRect(R.R, R.T, 960 - R.R, R.H);
+
+    // Floor tiles — 32×32 checkerboard
+    const FT = 32;
+    for (let tx = R.L; tx < R.R; tx += FT) {
+      for (let ty = R.T; ty < R.B; ty += FT) {
+        const w = Math.min(FT, R.R - tx);
+        const h = Math.min(FT, R.B - ty);
+        g.fillStyle(
+          (Math.floor((tx - R.L) / FT) + Math.floor((ty - R.T) / FT)) % 2 === 0
+            ? 0x2a1f14 : 0x221a0f
+        );
         g.fillRect(tx, ty, w, h);
       }
     }
 
-    g.lineStyle(2, 0xc9a84c, 0.3);
+    // Subtle floor grid
+    g.lineStyle(1, 0x0d0b08, 0.5);
+    for (let tx = R.L + FT; tx < R.R; tx += FT) g.lineBetween(tx, R.T, tx, R.B);
+    for (let ty = R.T + FT; ty < R.B; ty += FT) g.lineBetween(R.L, ty, R.R, ty);
+
+    // Inner wall border glow
+    g.lineStyle(2, 0xc9a84c, 0.45);
     g.strokeRect(R.L, R.T, R.W, R.H);
     g.lineStyle(1, 0xc9a84c, 0.1);
     g.strokeRect(R.L + 4, R.T + 4, R.W - 8, R.H - 8);
+
+    // Stone block helper — draws a raised pillar/wall block with highlight edges
+    const block = (x: number, y: number, w: number, h: number) => {
+      g.fillStyle(0x2a2014);
+      g.fillRect(x, y, w, h);
+      g.lineStyle(1, 0x4a3824, 0.9);
+      g.lineBetween(x, y, x + w, y);
+      g.lineBetween(x, y, x, y + h);
+      g.lineStyle(1, 0x0c0a06, 1);
+      g.lineBetween(x + w, y, x + w, y + h);
+      g.lineBetween(x, y + h, x + w, y + h);
+    };
+
+    const layoutIndex = roomType === 'Boss' ? 5 : roomIndex % 5;
+    let torchPos: { x: number; y: number }[] = [];
+
+    switch (layoutIndex) {
+      case 0: { // Entrance Hall — 4 corner pillars + mid-side accents
+        block(R.L + 24, R.T + 24, 48, 48);
+        block(R.R - 72, R.T + 24, 48, 48);
+        block(R.L + 24, R.B - 72, 48, 48);
+        block(R.R - 72, R.B - 72, 48, 48);
+        block(R.L + 24, R.CY - 24, 24, 48);
+        block(R.R - 48, R.CY - 24, 24, 48);
+        torchPos = [
+          { x: R.L + 52, y: R.T + 4 }, { x: R.R - 52, y: R.T + 4 },
+          { x: R.L + 4,  y: R.CY    }, { x: R.R - 4,  y: R.CY    },
+          { x: R.CX,     y: R.T + 4 }, { x: R.CX,     y: R.B - 4 },
+        ];
+        break;
+      }
+      case 1: { // Pillar Crypt — 4×5 grid of stone pillars
+        const pcols = [R.L + 100, R.L + 220, R.CX, R.R - 220, R.R - 100];
+        const prows = [R.T + 80,  R.T + 210, R.B - 210, R.B - 80];
+        for (const px of pcols) for (const py of prows) block(px - 18, py - 18, 36, 36);
+        torchPos = [
+          { x: R.L + 4, y: R.T + 4 }, { x: R.R - 4, y: R.T + 4 },
+          { x: R.L + 4, y: R.B - 4 }, { x: R.R - 4, y: R.B - 4 },
+          { x: R.CX,    y: R.T + 4 }, { x: R.CX,    y: R.B - 4 },
+        ];
+        break;
+      }
+      case 2: { // Twin Chambers — vertical divider with center doorway
+        const gap = 80;
+        block(R.CX - 16, R.T, 32, R.H / 2 - gap / 2);
+        block(R.CX - 16, R.CY + gap / 2, 32, R.H / 2 - gap / 2);
+        torchPos = [
+          { x: R.L + 4,    y: R.T + 4 }, { x: R.R - 4,    y: R.T + 4 },
+          { x: R.L + 4,    y: R.B - 4 }, { x: R.R - 4,    y: R.B - 4 },
+          { x: R.CX - 48,  y: R.CY    }, { x: R.CX + 48,  y: R.CY    },
+        ];
+        break;
+      }
+      case 3: { // Cross Hall — L-shaped walls at each corner
+        block(R.L, R.T, 80, 48);      block(R.L, R.T, 48, 80);
+        block(R.R - 80, R.T, 80, 48); block(R.R - 48, R.T, 48, 80);
+        block(R.L, R.B - 48, 80, 48); block(R.L, R.B - 80, 48, 80);
+        block(R.R - 80, R.B - 48, 80, 48); block(R.R - 48, R.B - 80, 48, 80);
+        torchPos = [
+          { x: R.L + 4, y: R.CY }, { x: R.R - 4, y: R.CY },
+          { x: R.CX,    y: R.T + 4 }, { x: R.CX,  y: R.B - 4 },
+        ];
+        break;
+      }
+      case 4: { // Guard Post — offset pillar pairs + central blockade
+        block(R.L + 48,  R.T + 48,  32, 32);
+        block(R.R - 80,  R.T + 48,  32, 32);
+        block(R.L + 116, R.T + 132, 32, 32);
+        block(R.R - 148, R.T + 132, 32, 32);
+        block(R.L + 116, R.B - 164, 32, 32);
+        block(R.R - 148, R.B - 164, 32, 32);
+        block(R.L + 48,  R.B - 80,  32, 32);
+        block(R.R - 80,  R.B - 80,  32, 32);
+        block(R.CX - 52, R.CY - 60, 104, 28);
+        block(R.CX - 52, R.CY + 32, 104, 28);
+        torchPos = [
+          { x: R.L + 4,  y: R.T + 4 }, { x: R.R - 4,  y: R.T + 4 },
+          { x: R.L + 4,  y: R.B - 4 }, { x: R.R - 4,  y: R.B - 4 },
+          { x: R.L + 64, y: R.CY    }, { x: R.R - 64, y: R.CY    },
+        ];
+        break;
+      }
+      case 5: { // Boss Sanctum — raised bastions + flanking columns
+        block(R.L, R.T, 160, 80);
+        block(R.R - 160, R.T, 160, 80);
+        for (const dy of [120, 200, 280, 360]) {
+          block(R.L, R.T + dy, 32, 24);
+          block(R.R - 32, R.T + dy, 32, 24);
+        }
+        torchPos = [
+          { x: R.L + 4, y: R.T + 4 }, { x: R.R - 4, y: R.T + 4 },
+          { x: R.L + 4, y: R.CY    }, { x: R.R - 4, y: R.CY    },
+          { x: R.L + 4, y: R.B - 4 }, { x: R.R - 4, y: R.B - 4 },
+          { x: R.CX,    y: R.T + 4 },
+        ];
+        break;
+      }
+    }
+
+    for (const { x, y } of torchPos) this.placeTorch(x, y);
+  }
+
+  private placeTorch(x: number, y: number) {
+    const t = this.add.graphics().setDepth(2);
+    t.fillStyle(0xffcc44, 0.2);  t.fillCircle(x, y, 18);
+    t.fillStyle(0xff8800, 0.45); t.fillCircle(x, y, 10);
+    t.fillStyle(0xffcc44, 0.85); t.fillCircle(x, y,  5);
+    t.fillStyle(0xffffff, 0.9);  t.fillCircle(x, y,  2);
+    this.roomDecorations.push(t);
+    const dur = 500 + Math.random() * 300;
+    this.tweens.add({
+      targets: t,
+      alpha:  { from: 0.65, to: 1.0 },
+      scaleX: { from: 0.88, to: 1.12 },
+      scaleY: { from: 0.88, to: 1.12 },
+      duration: dur, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+    });
+  }
+
+  private clearRoomVisuals() {
+    for (const d of this.roomDecorations) d.destroy();
+    this.roomDecorations = [];
+  }
+
+  private showRoomBanner(roomIndex: number, roomType?: string) {
+    const NAMES: Record<string, string[]> = {
+      Normal:        ['Entrance Hall', 'Pillar Crypt', 'Twin Chambers', 'Cross Hall', 'Guard Post'],
+      Elite:         ['Elite Chamber', "Champion's Hall", "Warlord's Den", 'Iron Gauntlet', "Death's Antechamber"],
+      TreasureChest: ['Treasure Vault', 'Hidden Stash', 'The Hoard', 'Gilded Chamber', 'Reward Chamber'],
+      Boss:          ['Boss Sanctum'],
+    };
+    const type  = roomType ?? 'Normal';
+    const names = NAMES[type] ?? NAMES['Normal']!;
+    const name  = names[roomIndex % names.length];
+    const sub   = type === 'Boss'          ? '— Boss Encounter —'
+                : type === 'Elite'         ? '— Elite —'
+                : type === 'TreasureChest' ? '— Treasure —'
+                : `Room ${roomIndex + 1}`;
+
+    const panelW = 340, panelH = 72;
+    const panelX = (960 - panelW) / 2, panelY = 176;
+
+    const bg = this.add.graphics().setDepth(50).setAlpha(0);
+    bg.fillStyle(0x000000, 0.75);
+    bg.fillRect(panelX, panelY, panelW, panelH);
+    bg.lineStyle(1, 0xc9a84c, 0.8);
+    bg.strokeRect(panelX, panelY, panelW, panelH);
+
+    const titleObj = this.add.text(480, panelY + 18, name, {
+      fontFamily: 'Courier New', fontSize: '18px', color: '#c9a84c',
+    }).setOrigin(0.5, 0).setDepth(51).setAlpha(0);
+
+    const subObj = this.add.text(480, panelY + 44, sub, {
+      fontFamily: 'Courier New', fontSize: '11px', color: '#aaaaaa',
+    }).setOrigin(0.5, 0).setDepth(51).setAlpha(0);
+
+    const targets = [bg, titleObj, subObj];
+    this.tweens.add({
+      targets, alpha: 1, duration: 400,
+      onComplete: () => {
+        this.tweens.add({
+          targets, alpha: 0, duration: 600, delay: 2000,
+          onComplete: () => { bg.destroy(); titleObj.destroy(); subObj.destroy(); },
+        });
+      },
+    });
   }
 
   // ── Visual effects ─────────────────────────────────────────────────────────
