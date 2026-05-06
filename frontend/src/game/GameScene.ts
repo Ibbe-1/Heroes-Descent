@@ -11,7 +11,6 @@ const HIT_RADIUS: Record<string, number> = { Archer: 16, Wizard: 28 };
 const TILE = 64;
 
 // Scale chosen so each class renders at roughly 70 px tall on the 960×640 canvas.
-// Warrior frames are 140 px, Wizard 190 px, Archer 100 px.
 const CLASS_SCALE: Record<string, number> = {
   Warrior: 0.5,
   Wizard:  0.4,
@@ -24,6 +23,128 @@ const ENEMY_COLOR: Record<string, number> = {
   Spider:   0x6c3483,
 };
 const BOSS_NAMES = new Set(['Dark Mage']);
+
+// ── Room image definitions ──────────────────────────────────────────────────
+// crop    — pixel region to extract from dungeon_map.png (1920×1080)
+// hazards — game-coordinate (960×640) rectangles the player cannot enter
+// torches — game-coordinate positions for animated flickering glow overlays
+// name    — text shown in the room-transition banner
+//
+// Hazard coordinates are pre-computed from the image crop and scaled to the
+// 960×640 canvas:  gameX = (imageX - crop.x) * (960 / crop.w)
+//                  gameY = (imageY - crop.y) * (640 / crop.h)
+
+interface HazardZone { x1: number; y1: number; x2: number; y2: number; }
+interface RoomDef {
+  crop:    { x: number; y: number; w: number; h: number };
+  hazards: HazardZone[];
+  torches: { x: number; y: number }[];
+  name:    string;
+}
+
+const ROOM_DEFS: Record<string, RoomDef> = {
+  // Crops reference the 1672×941 dungeon_map.png:
+  //   Col seams at x≈412, 831, 1253  |  Row seams at y≈409, 713
+  entrance: {
+    crop:    { x: 0,    y: 0,   w: 413, h: 410 },
+    hazards: [],
+    torches: [
+      { x: 64, y: 64 }, { x: 896, y: 64 }, { x: 64, y: 576 }, { x: 896, y: 576 },
+      { x: 64, y: 320 }, { x: 896, y: 320 },
+    ],
+    name: 'Entrance Hall',
+  },
+  lava: {
+    crop:    { x: 413,  y: 0,   w: 419, h: 410 },
+    hazards: [],
+    torches: [
+      { x: 64, y: 64 }, { x: 480, y: 64 }, { x: 896, y: 64 },
+      { x: 64, y: 576 }, { x: 480, y: 576 }, { x: 896, y: 576 },
+    ],
+    name: 'Lava Cavern',
+  },
+  water: {
+    crop:    { x: 832,  y: 0,   w: 422, h: 410 },
+    hazards: [],
+    torches: [
+      { x: 64, y: 64 }, { x: 896, y: 64 }, { x: 64, y: 576 }, { x: 896, y: 576 },
+      { x: 64, y: 320 }, { x: 896, y: 320 },
+    ],
+    name: 'Water Canal',
+  },
+  archive: {
+    crop:    { x: 413,  y: 410, w: 419, h: 304 },
+    hazards: [],
+    torches: [
+      { x: 64, y: 64 }, { x: 480, y: 64 }, { x: 896, y: 64 },
+      { x: 64, y: 576 }, { x: 896, y: 576 },
+    ],
+    name: 'Ancient Archive',
+  },
+  garden: {
+    crop:    { x: 1254, y: 0,   w: 418, h: 410 },
+    hazards: [],
+    torches: [
+      { x: 64, y: 64 }, { x: 896, y: 64 }, { x: 64, y: 576 }, { x: 896, y: 576 },
+    ],
+    name: 'Overgrown Garden',
+  },
+  machines: {
+    crop:    { x: 0,    y: 410, w: 413, h: 304 },
+    hazards: [],
+    torches: [
+      { x: 64, y: 64 }, { x: 480, y: 64 }, { x: 896, y: 64 },
+      { x: 64, y: 576 }, { x: 480, y: 576 }, { x: 896, y: 576 },
+    ],
+    name: 'Machine Workshop',
+  },
+  armory: {
+    crop:    { x: 832,  y: 410, w: 422, h: 304 },
+    hazards: [],
+    torches: [
+      { x: 64, y: 64 }, { x: 896, y: 64 }, { x: 64, y: 576 }, { x: 896, y: 576 },
+    ],
+    name: 'Armory',
+  },
+  boss: {
+    crop:    { x: 0,    y: 714, w: 413, h: 227 },
+    hazards: [],
+    torches: [
+      { x: 64, y: 64 }, { x: 480, y: 64 }, { x: 896, y: 64 },
+      { x: 64, y: 320 }, { x: 896, y: 320 },
+      { x: 64, y: 576 }, { x: 480, y: 576 }, { x: 896, y: 576 },
+    ],
+    name: 'Boss Sanctum',
+  },
+  vault: {
+    crop:    { x: 413,  y: 714, w: 419, h: 227 },
+    hazards: [],
+    torches: [
+      { x: 64, y: 64 }, { x: 896, y: 64 }, { x: 64, y: 576 }, { x: 896, y: 576 },
+    ],
+    name: 'Treasure Vault',
+  },
+  exit: {
+    crop:    { x: 1254, y: 714, w: 418, h: 227 },
+    hazards: [],
+    torches: [
+      { x: 64, y: 64 }, { x: 896, y: 64 }, { x: 64, y: 576 }, { x: 896, y: 576 },
+    ],
+    name: 'Exit Hall',
+  },
+};
+
+// Normal/Elite rooms cycle through these 8 keys in order by roomIndex.
+// TreasureChest rooms always show the vault. Boss rooms always show the sanctum.
+const NORMAL_KEYS = ['entrance', 'lava', 'water', 'archive', 'garden', 'machines', 'armory', 'exit'];
+
+function roomDefKey(roomIndex: number, roomType?: string): string {
+  if (roomType === 'Boss')          return 'boss';
+  if (roomType === 'TreasureChest') return 'vault';
+  return NORMAL_KEYS[roomIndex % NORMAL_KEYS.length];
+}
+
+// ── Sprite interfaces ───────────────────────────────────────────────────────
 
 // Regular enemies render as coloured rectangles; the Dark Mage boss uses an animated sprite.
 interface EnemySprite {
@@ -89,12 +210,18 @@ export class GameScene extends Phaser.Scene {
   private kQ!:     Phaser.Input.Keyboard.Key;
 
   private roomDecorations: Phaser.GameObjects.GameObject[] = [];
+  // Active hazard zones for the current room — checked every move() tick.
+  private currentHazards: HazardZone[] = [];
 
   constructor() { super({ key: 'GameScene' }); }
 
   // ── Phaser lifecycle: preload ──────────────────────────────────────────────
 
   preload() {
+    // Dungeon background map — used by drawRoom() to show each room as a
+    // cropped region of the full 1920×1080 image scaled to the 960×640 canvas.
+    this.load.image('dungeon-map', '/assets/dungeon_map.png');
+
     // Warrior — 140×140 frames
     this.load.spritesheet('warrior-idle',     '/assets/Warrior/Idle.png',     { frameWidth: 140, frameHeight: 140 });
     this.load.spritesheet('warrior-run',      '/assets/Warrior/Run.png',      { frameWidth: 140, frameHeight: 140 });
@@ -137,6 +264,13 @@ export class GameScene extends Phaser.Scene {
   // ── Phaser lifecycle: create ───────────────────────────────────────────────
 
   create() {
+    // Register a named texture frame for every room crop so drawRoom() can
+    // reference them by key without re-slicing the texture each call.
+    const tex = this.textures.get('dungeon-map');
+    for (const [key, def] of Object.entries(ROOM_DEFS)) {
+      tex.add(key, 0, def.crop.x, def.crop.y, def.crop.w, def.crop.h);
+    }
+
     this.drawRoom(0);
     this.createWarriorAnims();
     this.createWizardAnims();
@@ -197,9 +331,6 @@ export class GameScene extends Phaser.Scene {
     this.game.canvas.focus();
 
     // Tell GamePage that create() is done and all listeners are live.
-    // The sceneReady callback in GamePage emits setEngine / setUserId / setHeroClass /
-    // stateUpdate synchronously, so by the time this line returns the sprite is
-    // already initialised and positioned.
     this.game.events.emit('sceneReady');
   }
 
@@ -207,8 +338,6 @@ export class GameScene extends Phaser.Scene {
 
   private createWarriorAnims() {
     const a = this.anims;
-    // Frame counts verified from pixel dimensions: Idle=11, Run=8, Jump=4, Fall=4,
-    // Dash=4, Attack=6, TakeHit=4, Death=9
     a.create({ key: 'warrior-idle',     frames: a.generateFrameNumbers('warrior-idle',     { start: 0, end: 10 }), frameRate: 8,  repeat: -1 });
     a.create({ key: 'warrior-run',      frames: a.generateFrameNumbers('warrior-run',      { start: 0, end: 7  }), frameRate: 10, repeat: -1 });
     a.create({ key: 'warrior-jump',     frames: a.generateFrameNumbers('warrior-jump',     { start: 0, end: 3  }), frameRate: 8,  repeat: 0  });
@@ -221,7 +350,6 @@ export class GameScene extends Phaser.Scene {
 
   private createWizardAnims() {
     const a = this.anims;
-    // Frame counts: Idle=6, Run=8, Jump=2, Fall=2, Attack1=8, Attack2=8, Hit=4, Death=7
     a.create({ key: 'wizard-idle',    frames: a.generateFrameNumbers('wizard-idle',    { start: 0, end: 5 }), frameRate: 8,  repeat: -1 });
     a.create({ key: 'wizard-run',     frames: a.generateFrameNumbers('wizard-run',     { start: 0, end: 7 }), frameRate: 10, repeat: -1 });
     a.create({ key: 'wizard-jump',    frames: a.generateFrameNumbers('wizard-jump',    { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
@@ -234,7 +362,6 @@ export class GameScene extends Phaser.Scene {
 
   private createArcherAnims() {
     const a = this.anims;
-    // Frame counts: Idle=10, Run=8, Jump=2, Fall=2, Attack=6, GetHit=3, Death=10
     a.create({ key: 'archer-idle',    frames: a.generateFrameNumbers('archer-idle',    { start: 0, end: 9 }), frameRate: 8,  repeat: -1 });
     a.create({ key: 'archer-run',     frames: a.generateFrameNumbers('archer-run',     { start: 0, end: 7 }), frameRate: 10, repeat: -1 });
     a.create({ key: 'archer-jump',    frames: a.generateFrameNumbers('archer-jump',    { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
@@ -246,7 +373,6 @@ export class GameScene extends Phaser.Scene {
 
   private createDarkMageAnims() {
     const a = this.anims;
-    // Frame counts: Idle=8, Run=8, Attack=8, TakeHit=3, Death=7, Jump=2, Fall=2
     a.create({ key: 'boss-idle',     frames: a.generateFrameNumbers('boss-idle',     { start: 0, end: 7 }), frameRate: 8,  repeat: -1 });
     a.create({ key: 'boss-run',      frames: a.generateFrameNumbers('boss-run',      { start: 0, end: 7 }), frameRate: 10, repeat: -1 });
     a.create({ key: 'boss-attack',   frames: a.generateFrameNumbers('boss-attack',   { start: 0, end: 7 }), frameRate: 12, repeat: 0  });
@@ -256,7 +382,6 @@ export class GameScene extends Phaser.Scene {
     a.create({ key: 'boss-fall',     frames: a.generateFrameNumbers('boss-fall',     { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
   }
 
-  // Switches the local player sprite to the correct texture, scale, and idle animation.
   private initPlayerSprite(heroClass: string) {
     this.mySprite.anims.stop();
     this.currentAnimKey = '';
@@ -267,8 +392,6 @@ export class GameScene extends Phaser.Scene {
     this.playAnim(`${prefix}-idle`);
   }
 
-  // Plays an animation on the local sprite only if it isn't already active,
-  // which prevents restarting from frame 0 on every update() call.
   private playAnim(key: string) {
     if (this.currentAnimKey === key) return;
     this.currentAnimKey = key;
@@ -297,11 +420,21 @@ export class GameScene extends Phaser.Scene {
 
     if (dx && dy) { dx *= 0.707; dy *= 0.707; }
 
-    this.localX = Phaser.Math.Clamp(this.localX + dx, R.L + 16, R.R - 16);
-    this.localY = Phaser.Math.Clamp(this.localY + dy, R.T + 16, R.B - 16);
+    const newX = Phaser.Math.Clamp(this.localX + dx, R.L + 16, R.R - 16);
+    const newY = Phaser.Math.Clamp(this.localY + dy, R.T + 16, R.B - 16);
+
+    // Hazard collision — try full move, then axis-only fallbacks.
+    if (!this.inHazard(newX, newY)) {
+      this.localX = newX;
+      this.localY = newY;
+    } else if (!this.inHazard(newX, this.localY)) {
+      this.localX = newX;
+    } else if (!this.inHazard(this.localX, newY)) {
+      this.localY = newY;
+    }
+    // else: both axes blocked — position unchanged.
 
     this.mySprite.setPosition(this.localX, this.localY);
-    // Label floats above the top of the sprite frame.
     const labelY = this.localY - this.mySprite.displayHeight / 2 - 10;
     this.myLabel.setPosition(this.localX, labelY);
 
@@ -315,6 +448,11 @@ export class GameScene extends Phaser.Scene {
         this.playAnim(moving ? `${prefix}-run` : `${prefix}-idle`);
       }
     }
+  }
+
+  // Returns true if the point (x, y) lies inside any hazard zone for the current room.
+  private inHazard(x: number, y: number): boolean {
+    return this.currentHazards.some(h => x > h.x1 && x < h.x2 && y > h.y1 && y < h.y2);
   }
 
   private sendPos(time: number) {
@@ -378,7 +516,6 @@ export class GameScene extends Phaser.Scene {
     this.showSkeletonProjectiles(s);
     this.state = s;
 
-    // Make sure the local player never appears as an other-player sprite.
     if (this.myUserId) this.destroyOther(this.myUserId);
 
     // ── Local player ──
@@ -387,7 +524,6 @@ export class GameScene extends Phaser.Scene {
       const prevClass = this.myHeroClass;
       this.myHeroClass = me.heroClass;
 
-      // First time class is known (or if it changes) — swap sprite texture.
       if (this.myHeroClass && this.myHeroClass !== prevClass) {
         this.initPlayerSprite(this.myHeroClass);
       }
@@ -444,7 +580,6 @@ export class GameScene extends Phaser.Scene {
     let sp = this.others.get(p.userId);
 
     if (!sp) {
-      // New player — create their sprite with the correct class texture.
       const prefix = p.heroClass.toLowerCase();
       const scale  = CLASS_SCALE[p.heroClass] ?? 0.5;
       const sprite = this.add.sprite(p.x, p.y, `${prefix}-idle`, 0)
@@ -468,7 +603,6 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (!p.isAlive && !sp.dead) {
-      // Trigger death animation once.
       sp.dead = true;
       const deathKey = `${sp.heroClass.toLowerCase()}-death`;
       sp.animKey = deathKey;
@@ -477,17 +611,14 @@ export class GameScene extends Phaser.Scene {
       sp.label.setAlpha(0.3);
 
     } else if (p.isAlive) {
-      // Move sprite to latest server position.
       sp.sprite.setPosition(p.x, p.y).setAlpha(0.9);
       const labelY = p.y - sp.sprite.displayHeight / 2 - 10;
       sp.label.setPosition(p.x, labelY).setAlpha(1);
 
-      // Flip based on horizontal movement since last update.
       const mdx = p.x - sp.prevX;
       if (mdx < -1)      sp.sprite.setFlipX(true);
       else if (mdx > 1)  sp.sprite.setFlipX(false);
 
-      // Switch between idle and run based on whether they moved.
       if (!sp.dead) {
         const moving  = Math.abs(p.x - sp.prevX) > 1 || Math.abs(p.y - sp.prevY) > 1;
         const prefix  = sp.heroClass.toLowerCase();
@@ -503,7 +634,7 @@ export class GameScene extends Phaser.Scene {
     sp.prevY = p.y;
   }
 
-  // ── Enemy sprites (rectangles) ─────────────────────────────────────────────
+  // ── Enemy sprites ──────────────────────────────────────────────────────────
 
   private syncEnemy(e: EnemyState) {
     let sp = this.enemySprites.get(e.id);
@@ -597,14 +728,12 @@ export class GameScene extends Phaser.Scene {
     this.hpBars.clear();
     if (!this.state) return;
 
-    // Local player — bar sits just above the sprite's top edge.
     const me = this.state.players.find(p => p.userId === this.myUserId);
     if (me && this.myHeroClass) {
       const top = this.localY - this.mySprite.displayHeight / 2;
       this.drawBar(this.localX, top - 8, me.currentHp, me.maxHp, 0x2ecc71);
     }
 
-    // Other players.
     for (const [id, sp] of this.others) {
       const p = this.state.players.find(pl => pl.userId === id);
       if (p && p.isAlive) {
@@ -613,7 +742,6 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Enemies.
     for (const [id, sp] of this.enemySprites) {
       if (sp.dead) continue;
       const e = this.state.currentRoom.enemies.find(en => en.id === id);
@@ -641,159 +769,51 @@ export class GameScene extends Phaser.Scene {
   // ── Room drawing ───────────────────────────────────────────────────────────
 
   private drawRoom(roomIndex = 0, roomType?: string) {
-    const g = this.add.graphics().setDepth(0);
-    this.roomDecorations.push(g);
+    const key = roomDefKey(roomIndex, roomType);
+    const def = ROOM_DEFS[key];
 
-    // Canvas background
-    g.fillStyle(0x0b0906);
-    g.fillRect(0, 0, 960, 640);
+    // ── 1. Background: cropped region of dungeon_map.png scaled to fill canvas ──
+    // The texture frame 'key' was registered in create() and points to the
+    // exact pixel region for this room inside the 1920×1080 source image.
+    const bg = this.add.image(0, 0, 'dungeon-map', key)
+      .setOrigin(0, 0)
+      .setDisplaySize(960, 640)
+      .setDepth(0);
+    this.roomDecorations.push(bg);
 
-    // Stone wall border fill
-    g.fillStyle(0x141008);
-    g.fillRect(0, 0, 960, R.T);
-    g.fillRect(0, R.B, 960, 640 - R.B);
-    g.fillRect(0, R.T, R.L, R.H);
-    g.fillRect(R.R, R.T, 960 - R.R, R.H);
+    // ── 2. Wall border overlay — dark edges matching the server's 48 px wall bounds ──
+    // Drawn on top of the background so the playable area boundary is visually clear.
+    const walls = this.add.graphics().setDepth(1);
+    walls.fillStyle(0x0a0806, 0.88);
+    walls.fillRect(0, 0, 960, R.T);           // top
+    walls.fillRect(0, R.B, 960, 640 - R.B);   // bottom
+    walls.fillRect(0, R.T, R.L, R.H);         // left
+    walls.fillRect(R.R, R.T, 960 - R.R, R.H); // right
+    // Gold inner border line
+    walls.lineStyle(2, 0xc9a84c, 0.55);
+    walls.strokeRect(R.L, R.T, R.W, R.H);
+    this.roomDecorations.push(walls);
 
-    // Floor tiles — 32×32 checkerboard
-    const FT = 32;
-    for (let tx = R.L; tx < R.R; tx += FT) {
-      for (let ty = R.T; ty < R.B; ty += FT) {
-        const w = Math.min(FT, R.R - tx);
-        const h = Math.min(FT, R.B - ty);
-        g.fillStyle(
-          (Math.floor((tx - R.L) / FT) + Math.floor((ty - R.T) / FT)) % 2 === 0
-            ? 0x2a1f14 : 0x221a0f
-        );
-        g.fillRect(tx, ty, w, h);
-      }
-    }
+    // ── 3. Animated torch glows on top of the image ──────────────────────────
+    for (const pos of def.torches) this.placeTorch(pos.x, pos.y);
 
-    // Subtle floor grid
-    g.lineStyle(1, 0x0d0b08, 0.5);
-    for (let tx = R.L + FT; tx < R.R; tx += FT) g.lineBetween(tx, R.T, tx, R.B);
-    for (let ty = R.T + FT; ty < R.B; ty += FT) g.lineBetween(R.L, ty, R.R, ty);
-
-    // Inner wall border glow
-    g.lineStyle(2, 0xc9a84c, 0.45);
-    g.strokeRect(R.L, R.T, R.W, R.H);
-    g.lineStyle(1, 0xc9a84c, 0.1);
-    g.strokeRect(R.L + 4, R.T + 4, R.W - 8, R.H - 8);
-
-    // Stone block helper — draws a raised pillar/wall block with highlight edges
-    const block = (x: number, y: number, w: number, h: number) => {
-      g.fillStyle(0x2a2014);
-      g.fillRect(x, y, w, h);
-      g.lineStyle(1, 0x4a3824, 0.9);
-      g.lineBetween(x, y, x + w, y);
-      g.lineBetween(x, y, x, y + h);
-      g.lineStyle(1, 0x0c0a06, 1);
-      g.lineBetween(x + w, y, x + w, y + h);
-      g.lineBetween(x, y + h, x + w, y + h);
-    };
-
-    const layoutIndex = roomType === 'Boss' ? 5 : roomIndex % 5;
-    let torchPos: { x: number; y: number }[] = [];
-
-    switch (layoutIndex) {
-      case 0: { // Entrance Hall — 4 corner pillars + mid-side accents
-        block(R.L + 24, R.T + 24, 48, 48);
-        block(R.R - 72, R.T + 24, 48, 48);
-        block(R.L + 24, R.B - 72, 48, 48);
-        block(R.R - 72, R.B - 72, 48, 48);
-        block(R.L + 24, R.CY - 24, 24, 48);
-        block(R.R - 48, R.CY - 24, 24, 48);
-        torchPos = [
-          { x: R.L + 52, y: R.T + 4 }, { x: R.R - 52, y: R.T + 4 },
-          { x: R.L + 4,  y: R.CY    }, { x: R.R - 4,  y: R.CY    },
-          { x: R.CX,     y: R.T + 4 }, { x: R.CX,     y: R.B - 4 },
-        ];
-        break;
-      }
-      case 1: { // Pillar Crypt — 4×5 grid of stone pillars
-        const pcols = [R.L + 100, R.L + 220, R.CX, R.R - 220, R.R - 100];
-        const prows = [R.T + 80,  R.T + 210, R.B - 210, R.B - 80];
-        for (const px of pcols) for (const py of prows) block(px - 18, py - 18, 36, 36);
-        torchPos = [
-          { x: R.L + 4, y: R.T + 4 }, { x: R.R - 4, y: R.T + 4 },
-          { x: R.L + 4, y: R.B - 4 }, { x: R.R - 4, y: R.B - 4 },
-          { x: R.CX,    y: R.T + 4 }, { x: R.CX,    y: R.B - 4 },
-        ];
-        break;
-      }
-      case 2: { // Twin Chambers — vertical divider with center doorway
-        const gap = 80;
-        block(R.CX - 16, R.T, 32, R.H / 2 - gap / 2);
-        block(R.CX - 16, R.CY + gap / 2, 32, R.H / 2 - gap / 2);
-        torchPos = [
-          { x: R.L + 4,    y: R.T + 4 }, { x: R.R - 4,    y: R.T + 4 },
-          { x: R.L + 4,    y: R.B - 4 }, { x: R.R - 4,    y: R.B - 4 },
-          { x: R.CX - 48,  y: R.CY    }, { x: R.CX + 48,  y: R.CY    },
-        ];
-        break;
-      }
-      case 3: { // Cross Hall — L-shaped walls at each corner
-        block(R.L, R.T, 80, 48);      block(R.L, R.T, 48, 80);
-        block(R.R - 80, R.T, 80, 48); block(R.R - 48, R.T, 48, 80);
-        block(R.L, R.B - 48, 80, 48); block(R.L, R.B - 80, 48, 80);
-        block(R.R - 80, R.B - 48, 80, 48); block(R.R - 48, R.B - 80, 48, 80);
-        torchPos = [
-          { x: R.L + 4, y: R.CY }, { x: R.R - 4, y: R.CY },
-          { x: R.CX,    y: R.T + 4 }, { x: R.CX,  y: R.B - 4 },
-        ];
-        break;
-      }
-      case 4: { // Guard Post — offset pillar pairs + central blockade
-        block(R.L + 48,  R.T + 48,  32, 32);
-        block(R.R - 80,  R.T + 48,  32, 32);
-        block(R.L + 116, R.T + 132, 32, 32);
-        block(R.R - 148, R.T + 132, 32, 32);
-        block(R.L + 116, R.B - 164, 32, 32);
-        block(R.R - 148, R.B - 164, 32, 32);
-        block(R.L + 48,  R.B - 80,  32, 32);
-        block(R.R - 80,  R.B - 80,  32, 32);
-        block(R.CX - 52, R.CY - 60, 104, 28);
-        block(R.CX - 52, R.CY + 32, 104, 28);
-        torchPos = [
-          { x: R.L + 4,  y: R.T + 4 }, { x: R.R - 4,  y: R.T + 4 },
-          { x: R.L + 4,  y: R.B - 4 }, { x: R.R - 4,  y: R.B - 4 },
-          { x: R.L + 64, y: R.CY    }, { x: R.R - 64, y: R.CY    },
-        ];
-        break;
-      }
-      case 5: { // Boss Sanctum — raised bastions + flanking columns
-        block(R.L, R.T, 160, 80);
-        block(R.R - 160, R.T, 160, 80);
-        for (const dy of [120, 200, 280, 360]) {
-          block(R.L, R.T + dy, 32, 24);
-          block(R.R - 32, R.T + dy, 32, 24);
-        }
-        torchPos = [
-          { x: R.L + 4, y: R.T + 4 }, { x: R.R - 4, y: R.T + 4 },
-          { x: R.L + 4, y: R.CY    }, { x: R.R - 4, y: R.CY    },
-          { x: R.L + 4, y: R.B - 4 }, { x: R.R - 4, y: R.B - 4 },
-          { x: R.CX,    y: R.T + 4 },
-        ];
-        break;
-      }
-    }
-
-    for (const { x, y } of torchPos) this.placeTorch(x, y);
+    // ── 4. Activate hazard zones for this room ───────────────────────────────
+    this.currentHazards = def.hazards;
   }
 
   private placeTorch(x: number, y: number) {
     const t = this.add.graphics().setDepth(2).setPosition(x, y);
-    t.fillStyle(0xffcc44, 0.2);  t.fillCircle(0, 0, 18);
-    t.fillStyle(0xff8800, 0.45); t.fillCircle(0, 0, 10);
-    t.fillStyle(0xffcc44, 0.85); t.fillCircle(0, 0,  5);
-    t.fillStyle(0xffffff, 0.9);  t.fillCircle(0, 0,  2);
+    t.fillStyle(0xffcc44, 0.18);  t.fillCircle(0, 0, 20);
+    t.fillStyle(0xff8800, 0.40);  t.fillCircle(0, 0, 11);
+    t.fillStyle(0xffcc44, 0.80);  t.fillCircle(0, 0,  5);
+    t.fillStyle(0xffffff, 0.85);  t.fillCircle(0, 0,  2);
     this.roomDecorations.push(t);
     const dur = 500 + Math.random() * 300;
     this.tweens.add({
       targets: t,
-      alpha:  { from: 0.65, to: 1.0 },
-      scaleX: { from: 0.88, to: 1.12 },
-      scaleY: { from: 0.88, to: 1.12 },
+      alpha:  { from: 0.60, to: 1.0 },
+      scaleX: { from: 0.85, to: 1.15 },
+      scaleY: { from: 0.85, to: 1.15 },
       duration: dur, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
     });
   }
@@ -801,22 +821,16 @@ export class GameScene extends Phaser.Scene {
   private clearRoomVisuals() {
     for (const d of this.roomDecorations) d.destroy();
     this.roomDecorations = [];
+    this.currentHazards  = [];
   }
 
   private showRoomBanner(roomIndex: number, roomType?: string) {
-    const NAMES: Record<string, string[]> = {
-      Normal:        ['Entrance Hall', 'Pillar Crypt', 'Twin Chambers', 'Cross Hall', 'Guard Post'],
-      Elite:         ['Elite Chamber', "Champion's Hall", "Warlord's Den", 'Iron Gauntlet', "Death's Antechamber"],
-      TreasureChest: ['Treasure Vault', 'Hidden Stash', 'The Hoard', 'Gilded Chamber', 'Reward Chamber'],
-      Boss:          ['Boss Sanctum'],
-    };
-    const type  = roomType ?? 'Normal';
-    const names = NAMES[type] ?? NAMES['Normal']!;
-    const name  = names[roomIndex % names.length];
-    const sub   = type === 'Boss'          ? '— Boss Encounter —'
-                : type === 'Elite'         ? '— Elite —'
-                : type === 'TreasureChest' ? '— Treasure —'
-                : `Room ${roomIndex + 1}`;
+    const key  = roomDefKey(roomIndex, roomType);
+    const name = ROOM_DEFS[key].name;
+    const sub  = roomType === 'Boss'          ? '— Boss Encounter —'
+               : roomType === 'Elite'         ? '— Elite —'
+               : roomType === 'TreasureChest' ? '— Treasure —'
+               : `Room ${roomIndex + 1}`;
 
     const panelW = 340, panelH = 72;
     const panelX = (960 - panelW) / 2, panelY = 176;
@@ -862,7 +876,6 @@ export class GameScene extends Phaser.Scene {
           this.playAnim(moving ? 'warrior-run' : 'warrior-idle');
         }
       });
-      // Filled 90° cone in the aim direction.
       const atkAngle = Math.atan2(ny, nx);
       const half     = Math.PI / 4;
       const g = this.add.graphics().setDepth(15);
@@ -883,7 +896,6 @@ export class GameScene extends Phaser.Scene {
           this.playAnim(moving ? 'archer-run' : 'archer-idle');
         }
       });
-      // Arrow flying toward the cursor.
       const arrow = this.add.rectangle(this.localX, this.localY, 16, 3, 0x27ae60).setDepth(15);
       arrow.rotation = Math.atan2(ny, nx);
       this.tweens.add({ targets: arrow, x: endX, y: endY, duration: 220, onComplete: () => arrow.destroy() });
@@ -897,14 +909,11 @@ export class GameScene extends Phaser.Scene {
           this.playAnim(moving ? 'wizard-run' : 'wizard-idle');
         }
       });
-      // Purple orb drifting toward the cursor.
       const orb = this.add.arc(this.localX, this.localY, 9, 0, 360, false, 0x8e44ad, 0.9).setDepth(15);
       this.tweens.add({ targets: orb, x: endX, y: endY, duration: 420, alpha: 0.15, onComplete: () => orb.destroy() });
     }
   }
 
-  // Client-side ray-cast that mirrors the server's FindRayTarget so the fireball
-  // burst lands on the first enemy hit rather than at max range.
   private findFireballImpact(nx: number, ny: number): { x: number; y: number } {
     const range     = CLASS_RANGE['Wizard'];
     const hitRadius = HIT_RADIUS['Wizard'] ?? 28;
@@ -948,7 +957,6 @@ export class GameScene extends Phaser.Scene {
           this.playAnim(moving ? 'archer-run' : 'archer-idle');
         }
       });
-      // Multi-Shot: three arrows in a ±15° spread.
       const centerAngle = Math.atan2(ny, nx);
       const spread      = Math.PI / 12;
       const range       = CLASS_RANGE['Archer'];
@@ -991,7 +999,7 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  // ── Aim indicator (redrawn every frame) ────────────────────────────────────
+  // ── Aim indicator ──────────────────────────────────────────────────────────
 
   private drawAim() {
     this.aimGraphics.clear();
@@ -1036,7 +1044,6 @@ export class GameScene extends Phaser.Scene {
   private showSkeletonProjectiles(s: GameState) {
     const skeletons = s.currentRoom.enemies.filter(e => e.name === 'Skeleton' && e.isAlive);
 
-    // Find the Dark Mage boss sprite if one exists in this room.
     let bossSp: EnemySprite | undefined;
     for (const [id, sp] of this.enemySprites) {
       if (sp.sprite && !sp.dead) {
@@ -1057,7 +1064,6 @@ export class GameScene extends Phaser.Scene {
         ? this.localY
         : (this.others.get(player.userId)?.sprite.y ?? player.y);
 
-      // Skeleton bone projectile toward the player who was hit.
       for (const sk of skeletons) {
         const sdx = targetX - sk.x;
         const sdy = targetY - sk.y;
@@ -1066,7 +1072,6 @@ export class GameScene extends Phaser.Scene {
         this.tweens.add({ targets: proj, x: targetX, y: targetY, duration: 280, onComplete: () => proj.destroy() });
       }
 
-      // Dark Mage attack animation when a player is hit.
       if (bossSp?.sprite) {
         const locked = bossSp.animKey === 'boss-take-hit' || bossSp.animKey === 'boss-death' || bossSp.animKey === 'boss-attack';
         if (!locked) {
