@@ -704,11 +704,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private placeTorch(x: number, y: number) {
-    const t = this.add.graphics().setDepth(2);
-    t.fillStyle(0xffcc44, 0.2);  t.fillCircle(x, y, 18);
-    t.fillStyle(0xff8800, 0.45); t.fillCircle(x, y, 10);
-    t.fillStyle(0xffcc44, 0.85); t.fillCircle(x, y,  5);
-    t.fillStyle(0xffffff, 0.9);  t.fillCircle(x, y,  2);
+    const t = this.add.graphics().setDepth(2).setPosition(x, y);
+    t.fillStyle(0xffcc44, 0.2);  t.fillCircle(0, 0, 18);
+    t.fillStyle(0xff8800, 0.45); t.fillCircle(0, 0, 10);
+    t.fillStyle(0xffcc44, 0.85); t.fillCircle(0, 0,  5);
+    t.fillStyle(0xffffff, 0.9);  t.fillCircle(0, 0,  2);
     this.roomDecorations.push(t);
     const dur = 500 + Math.random() * 300;
     this.tweens.add({
