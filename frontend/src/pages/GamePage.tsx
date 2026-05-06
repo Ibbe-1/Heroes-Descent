@@ -142,7 +142,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
         width: 960,
         height: 640,
       },
-      render: { antialias: false, pixelArt: true },  // pixel-art style — nearest-neighbour upscaling
+      render: { antialias: false },
     };
 
     const game = new Phaser.Game(config);

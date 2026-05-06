@@ -5,21 +5,19 @@ namespace Heroes_Descent.Core.GameState;
 // and must exactly match the constants used in the Phaser scene on the frontend
 // so that positions mean the same thing on both sides of the connection.
 //
-// The world is 1920 × 1280 px. The Phaser canvas is 960 × 640, so the camera
-// follows the player around a world four times the canvas area.
-// Walls are 48 px thick on every side, leaving an 1824 × 1184 playable area
-// large enough to contain several chambers connected by corridors.
+// The game canvas is 960 × 640 px.
+// Walls are 48 px thick on every side, leaving an 864 × 544 playable area.
 public static class RoomBounds
 {
     // Inner room edges — enemies and players are clamped inside these
     public const float Left   = 48f;
-    public const float Right  = 1872f;
+    public const float Right  = 912f;
     public const float Top    = 48f;
-    public const float Bottom = 1232f;
+    public const float Bottom = 592f;
 
     // Center of the room — used as the player spawn reference point
-    public const float CenterX = (Left + Right) / 2f;    // 960
-    public const float CenterY = (Top + Bottom) / 2f;    // 640
+    public const float CenterX = (Left + Right) / 2f;    // 480
+    public const float CenterY = (Top + Bottom) / 2f;    // 320
 
     // Warrior melee cone range
     public const float PlayerAttackRange    = 120f;  // kept for AttackNearest compat
@@ -40,17 +38,17 @@ public static class RoomBounds
     public const float EnemyAttackRange  = 80f;
 
     // Enemies won't spawn within this radius of the room centre,
-    // giving the party a safe landing zone at the start of each room.
-    // Larger now because the world is 4× the previous area.
-    public const float EnemyMinSpawnDist = 300f;
+    // giving the party a safe landing zone at the start of each room
+    public const float EnemyMinSpawnDist = 200f;
 
-    // Spread-out spawn positions for up to 4 players, all in the central
-    // chamber of every layout so the party always lands in a safe pocket.
+    // Spread-out spawn positions for up to 4 players.
+    // Player 0 spawns at the centre; the rest step slightly to the sides.
+    // The server resets players to these positions on every room transition.
     public static readonly (float x, float y)[] PlayerSpawns =
     [
-        (960f, 640f),
-        (910f, 640f),
-        (1010f, 640f),
-        (960f, 690f),
+        (480f, 320f),
+        (430f, 320f),
+        (530f, 320f),
+        (480f, 370f),
     ];
 }
