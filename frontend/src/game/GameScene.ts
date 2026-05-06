@@ -12,10 +12,19 @@ import Phaser from 'phaser';
 import type { GameState, EnemyState, PlayerState } from '../types/gameTypes';
 import type { GameEngine } from './gameEngine';
 
+// World dimensions — the full size of every dungeon level.
+// The Phaser canvas (960 × 640) is the camera's viewport, smaller than the world,
+// so the camera follows the local player around a much larger map.
+const WORLD_W = 1920;
+const WORLD_H = 1280;
+
 // Room bounds — pixel coordinates that must match RoomBounds.cs on the server.
-// The canvas is 960 × 640; the playable room area is inset by 48px on each side.
-// R.CX / R.CY is the center of the room where players spawn.
-const R = { L: 48, R: 912, T: 48, B: 592, W: 864, H: 544, CX: 480, CY: 320 };
+// Walls are 48 px thick on every side, leaving an 1824 × 1184 playable area
+// large enough to hold several connected chambers per level.
+// R.CX / R.CY is the center where players spawn.
+const R = { L: 48, R: WORLD_W - 48, T: 48, B: WORLD_H - 48,
+            W: WORLD_W - 96, H: WORLD_H - 96,
+            CX: WORLD_W / 2, CY: WORLD_H / 2 };
 
 // Warrior melee attack range (px).
 const ATTACK_RANGE = 120;
@@ -25,9 +34,6 @@ const CLASS_RANGE: Record<string, number> = { Warrior: 120, Archer: 600, Wizard:
 
 // Projectile hit-box radii shown on the aim line indicator.
 const HIT_RADIUS: Record<string, number> = { Archer: 16, Wizard: 28 };
-
-// Tile size for the checkerboard floor pattern.
-const TILE = 64;
 
 // Rectangle fill colors for each hero class — helps players tell each other apart.
 const CLASS_COLOR: Record<string, number> = {
@@ -85,6 +91,13 @@ export class GameScene extends Phaser.Scene {
   private others = new Map<string, EntitySprites>();
   private enemySprites = new Map<string, EntitySprites & { prevHp: number; dead: boolean }>();
 
+  // Room visuals — destroyed and rebuilt on every room transition.
+  private roomMap: Phaser.Tilemaps.Tilemap | null = null;
+  private roomDecorations: Phaser.GameObjects.GameObject[] = [];
+  // Boolean wall grid (rows × cols of 16-px tiles) used by client-side
+  // collision so the local player can't walk through chamber walls.
+  private wallGrid: boolean[][] = [];
+
   // Hero class of the local player — set from state updates, used for aim visuals.
   private myHeroClass = '';
 
@@ -104,12 +117,37 @@ export class GameScene extends Phaser.Scene {
 
   constructor() { super({ key: 'GameScene' }); }
 
+  // ── Phaser lifecycle: preload ──────────────────────────────────────────────
+
+  preload() {
+    this.load.spritesheet('dungeon', '/assets/tiled/walls_floor.png',
+      { frameWidth: 16, frameHeight: 16 });
+    this.load.spritesheet('fire', '/assets/tiled/fire_animation.png',
+      { frameWidth: 16, frameHeight: 16 });
+  }
+
   // ── Phaser lifecycle: create ───────────────────────────────────────────────
 
   // Called once when the scene starts. We draw the room, create sprites,
   // register input, and start listening for events from React.
   create() {
-    this.drawRoom();
+    // Torch fire animation: 6 keyframes from column 0 of fire_animation.png,
+    // distributed every 3 rows (frames 0, 33, 66, 99, 132, 165).
+    this.anims.create({
+      key: 'torch',
+      frames: [
+        { key: 'fire', frame: 0   },
+        { key: 'fire', frame: 33  },
+        { key: 'fire', frame: 66  },
+        { key: 'fire', frame: 99  },
+        { key: 'fire', frame: 132 },
+        { key: 'fire', frame: 165 },
+      ],
+      frameRate: 6,
+      repeat: -1,
+    });
+
+    this.drawRoom(0);
 
     // HP bars use a shared Graphics object. Every frame we clear() it and
     // redraw all bars from scratch — simpler than updating many individual objects.
@@ -125,6 +163,13 @@ export class GameScene extends Phaser.Scene {
       fontFamily: 'Courier New', fontSize: '10px', color: '#ffffff',
     }).setOrigin(0.5, 1).setDepth(11);
 
+    // Camera setup — viewport is the canvas (960 × 640) but the world is
+    // WORLD_W × WORLD_H, so the camera follows the local player around the map.
+    // Lerp values smooth the follow so the camera doesn't snap on every frame.
+    this.cameras.main.setBounds(0, 0, WORLD_W, WORLD_H);
+    this.cameras.main.startFollow(this.myBody, true, 0.12, 0.12);
+    this.cameras.main.setRoundPixels(true);
+
     // Register keyboard keys. addKey returns an object we can query each frame.
     const kb = this.input.keyboard!;
     this.kW = kb.addKey(Phaser.Input.Keyboard.KeyCodes.W);
@@ -137,7 +182,12 @@ export class GameScene extends Phaser.Scene {
     // Listen for events emitted by React (via gameRef.current.events.emit).
     // This is the bridge between the React component tree and the Phaser scene.
     this.game.events.on('setEngine',   (e: GameEngine) => { this.engine = e; });
-    this.game.events.on('setUserId',   (id: string)    => { this.myUserId = id; });
+    this.game.events.on('setUserId', (id: string) => {
+      this.myUserId = id;
+      // If a state update arrived before we knew our own ID, the local player
+      // was added to `others` as a ghost. Destroy it now that we can identify it.
+      if (this.others.has(id)) this.destroyOther(id);
+    });
     this.game.events.on('setUsername', (n: string)     => {
       this.myUsername = n;
       this.myLabel.setText(n);
@@ -166,6 +216,8 @@ export class GameScene extends Phaser.Scene {
   // ── Input ─────────────────────────────────────────────────────────────────
 
   // Move the local player based on which WASD keys are held down.
+  // Movement is split per-axis so the player slides along walls instead of
+  // sticking when one axis is blocked but the other is free.
   private move(delta: number) {
     const s = this.SPEED * (delta / 1000);  // convert to pixels this frame
     let dx = 0, dy = 0;
@@ -178,13 +230,34 @@ export class GameScene extends Phaser.Scene {
     // 0.707 ≈ 1/√2 — the length of a unit diagonal vector.
     if (dx && dy) { dx *= 0.707; dy *= 0.707; }
 
-    // Clamp to keep the player inside the room walls.
-    this.localX = Phaser.Math.Clamp(this.localX + dx, R.L + 16, R.R - 16);
-    this.localY = Phaser.Math.Clamp(this.localY + dy, R.T + 16, R.B - 16);
+    // Try X then Y separately; reject either step if it would put us in a wall.
+    if (dx) {
+      const nx = Phaser.Math.Clamp(this.localX + dx, R.L + 16, R.R - 16);
+      if (!this.wallAt(nx, this.localY)) this.localX = nx;
+    }
+    if (dy) {
+      const ny = Phaser.Math.Clamp(this.localY + dy, R.T + 16, R.B - 16);
+      if (!this.wallAt(this.localX, ny)) this.localY = ny;
+    }
 
     // Move all objects that track the player's position.
     this.myBody.setPosition(this.localX, this.localY);
     this.myLabel.setPosition(this.localX, this.localY - 22);
+  }
+
+  // True if a 28×28 hit-box centered on (x, y) overlaps any wall tile.
+  // Checks the four corners of the hit-box against the wallGrid built when
+  // the room was drawn — pure pixel-to-tile lookup, no Phaser physics needed.
+  private wallAt(x: number, y: number): boolean {
+    const HALF = 14;
+    for (const ox of [-HALF, HALF]) {
+      for (const oy of [-HALF, HALF]) {
+        const c = Math.floor((x + ox) / 16);
+        const r = Math.floor((y + oy) / 16);
+        if (this.wallGrid[r]?.[c]) return true;
+      }
+    }
+    return false;
   }
 
   // Throttle position sends to every 50ms (20 updates/sec) to avoid flooding
@@ -242,14 +315,16 @@ export class GameScene extends Phaser.Scene {
   // We reconcile the server snapshot with the current Phaser objects:
   // create new sprites for new entities, update existing ones, destroy removed ones.
   private applyState(s: GameState) {
-    // Room changed → destroy all enemy sprites and snap player to their new spawn.
-    // The server teleports players to spawn points when MoveToNextRoom is called.
+    // Room changed → rebuild room visuals, clear enemies, snap player to spawn.
     if (s.currentRoomIndex !== this.lastRoomIndex) {
       this.lastRoomIndex = s.currentRoomIndex;
       this.clearEnemies();
+      this.clearRoomVisuals();
+      this.drawRoom(s.currentRoomIndex, s.currentRoom.type);
       this.prevPlayerHp.clear();
       const me = s.players.find(p => p.userId === this.myUserId);
       if (me) { this.localX = me.x; this.localY = me.y; }
+      this.showRoomBanner(s.currentRoomIndex, s.currentRoom.type);
     }
 
     // Check for HP drops before overwriting this.state so we can compare old vs new.
@@ -386,34 +461,225 @@ export class GameScene extends Phaser.Scene {
 
   // ── Room drawing ──────────────────────────────────────────────────────────
 
-  // Draws the static dungeon room background once during create().
-  // Uses a checkerboard pattern to give the floor visual texture without
-  // needing any image assets.
-  private drawRoom() {
-    const g = this.add.graphics().setDepth(0);
+  private clearRoomVisuals() {
+    this.roomMap?.destroy();
+    this.roomMap = null;
+    for (const obj of this.roomDecorations) { if (obj.active) obj.destroy(); }
+    this.roomDecorations = [];
+  }
 
-    // Dark outer area (walls outside the playable room).
-    g.fillStyle(0x0d0b08);
-    g.fillRect(0, 0, 960, 640);
+  // Multi-chamber room layouts for the 120×80 tile world.
+  // Each layout carves the playable area into several distinct chambers
+  // connected by corridors so the player feels like they're moving through
+  // a real dungeon instead of a single empty box.
+  // Boss rooms always use the throne sanctum layout regardless of index.
+  // Tile values use firstgid=1: value = frame + 1.
+  //   W=37  → frame 36  (stone wall block from walls_floor.png)
+  //   F=139 → frame 138 (stone floor tile from walls_floor.png)
+  private buildMapData(roomIndex: number, roomType = 'Normal'): number[][] {
+    const W = 37;
+    const F = 139;
+    const COLS = WORLD_W / 16;   // 120
+    const ROWS = WORLD_H / 16;   // 80
 
-    // Checkerboard floor tiles. Two slightly different dark shades alternate
-    // based on whether the column+row index sum is even or odd.
-    for (let tx = R.L; tx < R.R; tx += TILE) {
-      for (let ty = R.T; ty < R.B; ty += TILE) {
-        const w = Math.min(TILE, R.R - tx);
-        const h = Math.min(TILE, R.B - ty);
-        const even = (Math.floor((tx - R.L) / TILE) + Math.floor((ty - R.T) / TILE)) % 2 === 0;
-        g.fillStyle(even ? 0x2a1f14 : 0x231a10);
-        g.fillRect(tx, ty, w, h);
+    // Initialize: every tile a wall, then carve the playable interior to floor.
+    // wallGrid mirrors the tile data so the local-player collision check
+    // (wallAt) can do a pure pixel-to-tile lookup with no extra work.
+    const d: number[][] = Array.from({ length: ROWS }, () => new Array(COLS).fill(W));
+    this.wallGrid = Array.from({ length: ROWS }, () => new Array(COLS).fill(true));
+
+    for (let r = 3; r <= ROWS - 4; r++)
+      for (let c = 3; c <= COLS - 4; c++) {
+        d[r][c] = F;
+        this.wallGrid[r][c] = false;
       }
+
+    // Place a rectangle of wall tiles, marking both tile data and collision grid.
+    const wall = (c0: number, r0: number, cw: number, rh: number) => {
+      for (let r = r0; r < r0 + rh; r++)
+        for (let c = c0; c < c0 + cw; c++)
+          if (r >= 3 && r <= ROWS - 4 && c >= 3 && c <= COLS - 4) {
+            d[r][c] = W;
+            this.wallGrid[r][c] = true;
+          }
+    };
+
+    // Carve a floor rectangle through whatever walls were placed there.
+    const carve = (c0: number, r0: number, cw: number, rh: number) => {
+      for (let r = r0; r < r0 + rh; r++)
+        for (let c = c0; c < c0 + cw; c++)
+          if (r >= 3 && r <= ROWS - 4 && c >= 3 && c <= COLS - 4) {
+            d[r][c] = F;
+            this.wallGrid[r][c] = false;
+          }
+    };
+
+    const layout = (roomType === 'Boss') ? 3 : roomIndex % 3;
+
+    switch (layout) {
+      case 0:
+        // Crossroads — four corner blocks leave a plus-shaped corridor
+        // joining a central hub to a chamber on each cardinal side.
+        wall(3,  3,  44, 29);   // NW corner block
+        wall(73, 3,  44, 29);   // NE corner block
+        wall(3,  48, 44, 29);   // SW corner block
+        wall(73, 48, 44, 29);   // SE corner block
+        // Pillar pairs in each arm to break up the long sight-lines.
+        wall(58, 8,  2, 3);  wall(60, 8,  2, 3);
+        wall(58, 68, 2, 3);  wall(60, 68, 2, 3);
+        wall(8,  38, 2, 3);  wall(40, 38, 2, 3);
+        wall(78, 38, 2, 3);  wall(108, 38, 2, 3);
+        break;
+
+      case 1:
+        // Twin Halls — north and south chambers separated by a thick
+        // dividing wall pierced by three doorways. Players cross between
+        // halves through whichever door fits their tactical position.
+        wall(3,  36, 35, 8);    // wall left of door 1
+        wall(45, 36, 30, 8);    // wall between doors 1 and 2
+        wall(82, 36, 35, 8);    // wall right of door 3
+        // Pillar colonnades lining each chamber for grand-hall framing.
+        for (const c of [10, 25, 40, 55, 70, 85, 100, 113]) {
+          wall(c, 8,  2, 3);
+          wall(c, 68, 2, 3);
+        }
+        // Open the spawn pocket so the party never lands inside a wall.
+        carve(55, 36, 11, 8);
+        break;
+
+      case 2:
+        // Pillar Cathedral — long central nave flanked by colonnades and
+        // four side alcoves on each long wall, joined by short doorways.
+        // North alcoves
+        wall(3,   3, 18, 12);  wall(28,  3, 18, 12);
+        wall(53,  3, 18, 12);  wall(78,  3, 18, 12);
+        wall(103, 3, 14, 12);
+        // South alcoves
+        wall(3,   65, 18, 12);  wall(28,  65, 18, 12);
+        wall(53,  65, 18, 12);  wall(78,  65, 18, 12);
+        wall(103, 65, 14, 12);
+        // Two long pillar rows down the cathedral nave.
+        for (const c of [10, 22, 34, 46, 58, 70, 82, 94, 106]) {
+          wall(c, 22, 2, 3);
+          wall(c, 56, 2, 3);
+        }
+        // Cut doorways into each alcove so they're enterable.
+        for (const cc of [21, 46, 71, 96]) {
+          carve(cc, 11, 7, 4);
+          carve(cc, 65, 7, 4);
+        }
+        break;
+
+      case 3:
+        // Boss Sanctum — antechamber to the south, throne dais to the north,
+        // joined by a single wide doorway. Mighty pillars flank the aisle.
+        // Antechamber wall (gap at cols 53-66 = throne entrance)
+        wall(3,  24, 50, 6);   wall(67, 24, 50, 6);
+        // Throne dais wall behind the throne, with a narrow center gap
+        wall(3,   4, 30, 5);   wall(40, 4, 40, 5);   wall(87, 4, 30, 5);
+        // Mighty pillars flanking the central aisle (north chamber)
+        for (const r0 of [12, 36, 50, 64]) {
+          wall(20, r0, 3, 4);
+          wall(97, r0, 3, 4);
+        }
+        // Inner pillars guarding the throne approach
+        wall(40, 32, 3, 4);  wall(77, 32, 3, 4);
+        wall(40, 50, 3, 4);  wall(77, 50, 3, 4);
+        break;
     }
 
-    // Gold border around the playable area — drawn at low opacity so it's
-    // visible but doesn't distract from the action.
-    g.lineStyle(2, 0xc9a84c, 0.3);
+    // Torch niches — 2-tile floor openings cut into the outer wall rows/cols
+    // so torch flames appear recessed inside stone alcoves.
+    for (const nc of [12, 28, 44, 60, 76, 92, 108]) {
+      d[2][nc] = F; d[2][nc + 1] = F;
+      d[ROWS - 3][nc] = F; d[ROWS - 3][nc + 1] = F;
+    }
+    for (const nr of [10, 22, 34, 46, 58, 70]) {
+      d[nr][2] = F; d[nr + 1][2] = F;
+      d[nr][COLS - 3] = F; d[nr + 1][COLS - 3] = F;
+    }
+
+    return d;
+  }
+
+  // Rebuilds all room visuals. Called once in create() and again on every room transition.
+  private drawRoom(roomIndex: number = 0, roomType = 'Normal') {
+    const T = 16;
+
+    // Helper: create a tracked game object so clearRoomVisuals() can destroy it.
+    const track = <O extends Phaser.GameObjects.GameObject>(obj: O): O => {
+      this.roomDecorations.push(obj);
+      return obj;
+    };
+
+    // Tilemap layer — walls_floor.png, firstgid=1 so data value = frame index + 1.
+    const map = this.make.tilemap({ data: this.buildMapData(roomIndex, roomType), tileWidth: T, tileHeight: T });
+    this.roomMap = map;
+    const ts = map.addTilesetImage('dungeon', 'dungeon', T, T, 0, 0, 1);
+    if (ts) map.createLayer(0, ts, 0, 0, true)?.setDepth(0);
+
+    // Dark overlay covering the outer wall border (no internal corner columns
+    // anymore — those are part of each layout's chamber geometry).
+    const ov = track(this.add.graphics().setDepth(1));
+    ov.fillStyle(0x000000, 0.45);
+    ov.fillRect(0,            0,             WORLD_W, 48);    // north
+    ov.fillRect(0,            WORLD_H - 48,  WORLD_W, 48);    // south
+    ov.fillRect(0,            48,            48, WORLD_H - 96);  // west
+    ov.fillRect(WORLD_W - 48, 48,            48, WORLD_H - 96);  // east
+
+    // Shadow gradient where outer walls meet the floor — adds depth.
+    const sh = track(this.add.graphics().setDepth(2));
+    sh.fillStyle(0x000000, 0.30); sh.fillRect(R.L, R.T,         R.W, T);
+    sh.fillStyle(0x000000, 0.14); sh.fillRect(R.L, R.T + T,     R.W, T);
+    sh.fillStyle(0x000000, 0.06); sh.fillRect(R.L, R.T + T * 2, R.W, T);
+    sh.fillStyle(0x000000, 0.22); sh.fillRect(R.L,         R.T, T, R.H);
+    sh.fillStyle(0x000000, 0.10); sh.fillRect(R.L + T,     R.T, T, R.H);
+    sh.fillStyle(0x000000, 0.22); sh.fillRect(R.R - T,     R.T, T, R.H);
+    sh.fillStyle(0x000000, 0.10); sh.fillRect(R.R - T * 2, R.T, T, R.H);
+    sh.fillStyle(0x000000, 0.28); sh.fillRect(R.L, R.B - T,     R.W, T);
+    sh.fillStyle(0x000000, 0.12); sh.fillRect(R.L, R.B - T * 2, R.W, T);
+
+    // Torches in the outer-wall niches cut by buildMapData.
+    // North/south wall niches at every 16-tile interval (cols 12, 28, 44…).
+    const torchPos: Array<{ x: number; y: number }> = [];
+    for (const nc of [12, 28, 44, 60, 76, 92, 108]) {
+      torchPos.push({ x: (nc + 1) * T,        y: R.T - T / 2 });
+      torchPos.push({ x: (nc + 1) * T,        y: R.B + T / 2 });
+    }
+    for (const nr of [10, 22, 34, 46, 58, 70]) {
+      torchPos.push({ x: R.L - T / 2,         y: (nr + 1) * T });
+      torchPos.push({ x: R.R + T / 2,         y: (nr + 1) * T });
+    }
+
+    for (const { x, y } of torchPos) {
+      track(this.add.arc(x, y + 6, 28, 0, 360, false, 0xff6600, 0.09).setDepth(3));
+      track(this.add.arc(x, y + 2, 12, 0, 360, false, 0xffcc44, 0.20).setDepth(3));
+      track(this.add.sprite(x, y, 'fire', 0).setScale(2).setDepth(4).play('torch'));
+    }
+
+    // Stone-edge border at the room perimeter.
+    const g = track(this.add.graphics().setDepth(5));
+    g.lineStyle(2, 0x8a7050, 0.4);
     g.strokeRect(R.L, R.T, R.W, R.H);
-    g.lineStyle(1, 0xc9a84c, 0.1);
-    g.strokeRect(R.L + 4, R.T + 4, R.W - 8, R.H - 8);
+  }
+
+  // Briefly displays the room name in the center of the camera viewport.
+  // setScrollFactor(0) pins the text to the screen so it doesn't slide off
+  // when the camera follows the player.
+  private showRoomBanner(roomIndex: number, roomType: string) {
+    const names = ['Crossroads', 'Twin Halls', 'Pillar Cathedral'];
+    const name = roomType === 'Boss' ? '⚠ Boss Sanctum ⚠'
+      : roomType === 'TreasureChest' ? '✦ Treasure Room ✦'
+      : names[roomIndex % names.length];
+    const cam = this.cameras.main;
+    const txt = this.add.text(cam.width / 2, cam.height / 2, name, {
+      fontFamily: 'Courier New', fontSize: '28px', color: '#c9a84c',
+      stroke: '#000000', strokeThickness: 4,
+    }).setScrollFactor(0).setOrigin(0.5).setDepth(50).setAlpha(0);
+    this.tweens.add({
+      targets: txt, alpha: 1, duration: 400, yoyo: true, hold: 1200,
+      onComplete: () => txt.destroy(),
+    });
   }
 
   // ── Visual effects ────────────────────────────────────────────────────────
