@@ -1,13 +1,3 @@
-// GameScene.ts — the Phaser 3 game scene that renders the dungeon room.
-//
-// Phaser uses a scene lifecycle with three key methods:
-//   create()  — called once when the scene starts; set up all game objects and input.
-//   update()  — called every frame (~60fps); handle movement, input, and redraw bars.
-//
-// Because React and Phaser run in separate worlds, data flows between them via
-// the Phaser event bus (game.events). React emits events like 'stateUpdate' and
-// Phaser listens for them — no shared variables needed.
-
 import Phaser from 'phaser';
 import type { GameState, EnemyState, PlayerState } from '../types/gameTypes';
 import type { GameEngine } from './gameEngine';
@@ -26,13 +16,8 @@ const R = { L: 48, R: WORLD_W - 48, T: 48, B: WORLD_H - 48,
             W: WORLD_W - 96, H: WORLD_H - 96,
             CX: WORLD_W / 2, CY: WORLD_H / 2 };
 
-// Warrior melee attack range (px).
 const ATTACK_RANGE = 120;
-
-// Per-class attack ranges — must match RoomBounds.cs on the server.
 const CLASS_RANGE: Record<string, number> = { Warrior: 120, Archer: 600, Wizard: 800 };
-
-// Projectile hit-box radii shown on the aim line indicator.
 const HIT_RADIUS: Record<string, number> = { Archer: 16, Wizard: 28 };
 
 // Rectangle fill colors for each hero class — helps players tell each other apart.
@@ -42,38 +27,50 @@ const CLASS_COLOR: Record<string, number> = {
   Archer:  0x27ae60,  // green
 };
 
-// Rectangle fill colors for each enemy type.
-// Bosses are all red because they share the same "danger" cue.
 const ENEMY_COLOR: Record<string, number> = {
-  Skeleton:          0xbdc3c7,
-  Goblin:            0x2ecc71,
-  Spider:            0x6c3483,
-  'Bone Titan':      0xe74c3c,
-  'Ancient Colossus':0xe74c3c,
-  'Dungeon Overlord':0xff0000,
+  Skeleton:           0xbdc3c7,
+  Goblin:             0x2ecc71,
+  Spider:             0x6c3483,
+  'Bone Titan':       0xe74c3c,
+  'Ancient Colossus': 0xe74c3c,
+  'Dungeon Overlord': 0xff0000,
 };
 const BOSS_NAMES = new Set(['Bone Titan', 'Ancient Colossus', 'Dungeon Overlord']);
 
-// Every entity on screen (player or enemy) is represented by a rectangle + text label.
-// Storing both together makes it easy to move or destroy them as a pair.
-interface EntitySprites {
-  body: Phaser.GameObjects.Rectangle;
-  label: Phaser.GameObjects.Text;
+// Enemies are still rendered as coloured rectangles.
+interface EnemySprite {
+  body:   Phaser.GameObjects.Rectangle;
+  label:  Phaser.GameObjects.Text;
+  prevHp: number;
+  dead:   boolean;
 }
 
+// Other players are rendered as animated sprites.
+interface OtherSprite {
+  sprite:    Phaser.GameObjects.Sprite;
+  label:     Phaser.GameObjects.Text;
+  heroClass: string;
+  animKey:   string;
+  prevX:     number;
+  prevY:     number;
+  dead:      boolean;
+}
+
+// Animations that block idle/run transitions until they complete.
+const LOCKED_ANIMS = new Set([
+  'warrior-attack', 'warrior-dash', 'warrior-take-hit', 'warrior-death',
+  'wizard-attack1',  'wizard-attack2',  'wizard-hit',     'wizard-death',
+  'archer-attack',   'archer-get-hit',  'archer-death',
+]);
+
 export class GameScene extends Phaser.Scene {
-  // References injected by React via the event bus after the scene is created.
-  private engine: GameEngine | null = null;  // used to send actions to the server
-  private myUserId = '';
+  private engine: GameEngine | null = null;
+  private myUserId   = '';
   private myUsername = '';
 
-  // Latest snapshot received from the server.
-  private state: GameState | null = null;
-  // Tracked to detect when the server moves us to a new room.
+  private state:         GameState | null = null;
   private lastRoomIndex = -1;
 
-  // Local player position — updated locally at 60fps for smooth movement,
-  // then sent to the server every 50ms so others can see where we are.
   private localX = R.CX;
   private localY = R.CY;
   private readonly SPEED = 220;  // pixels per second
@@ -113,7 +110,7 @@ export class GameScene extends Phaser.Scene {
   private kS!: Phaser.Input.Keyboard.Key;
   private kD!: Phaser.Input.Keyboard.Key;
   private kSpace!: Phaser.Input.Keyboard.Key;
-  private kQ!: Phaser.Input.Keyboard.Key;
+  private kQ!:     Phaser.Input.Keyboard.Key;
 
   constructor() { super({ key: 'GameScene' }); }
 
@@ -128,8 +125,6 @@ export class GameScene extends Phaser.Scene {
 
   // ── Phaser lifecycle: create ───────────────────────────────────────────────
 
-  // Called once when the scene starts. We draw the room, create sprites,
-  // register input, and start listening for events from React.
   create() {
     // Torch fire animation: 6 keyframes from column 0 of fire_animation.png,
     // distributed every 3 rows (frames 0, 33, 66, 99, 132, 165).
@@ -149,17 +144,16 @@ export class GameScene extends Phaser.Scene {
 
     this.drawRoom(0);
 
-    // HP bars use a shared Graphics object. Every frame we clear() it and
-    // redraw all bars from scratch — simpler than updating many individual objects.
-    this.hpBars = this.add.graphics().setDepth(20);
-
-    // Aim indicator redrawn each frame — shows cone (Warrior) or aim line (Archer/Wizard).
+    this.hpBars      = this.add.graphics().setDepth(20);
     this.aimGraphics = this.add.graphics().setDepth(6);
 
-    // The local player's rectangle and name tag. setDepth() controls draw order —
-    // higher values appear on top. Player (10) is above enemies (8) and floor (0).
-    this.myBody = this.add.rectangle(R.CX, R.CY, 30, 30, 0x3498db).setDepth(10);
-    this.myLabel = this.add.text(R.CX, R.CY - 22, '', {
+    // Placeholder sprite — invisible until class is known so no wrong-class flash.
+    this.mySprite = this.add.sprite(R.CX, R.CY, 'warrior-idle', 0)
+      .setDepth(10)
+      .setScale(0.5)
+      .setAlpha(0);
+
+    this.myLabel = this.add.text(R.CX, R.CY - 45, '', {
       fontFamily: 'Courier New', fontSize: '10px', color: '#ffffff',
     }).setOrigin(0.5, 1).setDepth(11);
 
@@ -172,10 +166,10 @@ export class GameScene extends Phaser.Scene {
 
     // Register keyboard keys. addKey returns an object we can query each frame.
     const kb = this.input.keyboard!;
-    this.kW = kb.addKey(Phaser.Input.Keyboard.KeyCodes.W);
-    this.kA = kb.addKey(Phaser.Input.Keyboard.KeyCodes.A);
-    this.kS = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);
-    this.kD = kb.addKey(Phaser.Input.Keyboard.KeyCodes.D);
+    this.kW     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.W);
+    this.kA     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.A);
+    this.kS     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);
+    this.kD     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.D);
     this.kSpace = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
     this.kQ = kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
 
@@ -192,19 +186,88 @@ export class GameScene extends Phaser.Scene {
       this.myUsername = n;
       this.myLabel.setText(n);
     });
-    // Every server broadcast triggers applyState, which syncs all sprites.
-    this.game.events.on('stateUpdate', (s: GameState)  => this.applyState(s));
+    // heroClass is sent by GamePage right after sceneReady fires so the sprite
+    // is visible from the very first update() tick, without waiting for server state.
+    this.game.events.on('setHeroClass', (hc: string)    => {
+      if (hc && this.myHeroClass !== hc) {
+        this.myHeroClass = hc;
+        this.initPlayerSprite(hc);
+      }
+    });
+    this.game.events.on('stateUpdate',  (s: GameState)  => this.applyState(s));
 
-    // The canvas must be focused for keyboard events to fire.
-    // tabindex='0' makes a non-focusable element focusable.
     this.game.canvas.setAttribute('tabindex', '0');
     this.game.canvas.focus();
+
+    // Tell GamePage that create() is done and all listeners are live.
+    // The sceneReady callback in GamePage emits setEngine / setUserId / setHeroClass /
+    // stateUpdate synchronously, so by the time this line returns the sprite is
+    // already initialised and positioned.
+    this.game.events.emit('sceneReady');
+  }
+
+  // ── Animation setup ────────────────────────────────────────────────────────
+
+  private createWarriorAnims() {
+    const a = this.anims;
+    // Frame counts verified from pixel dimensions: Idle=11, Run=8, Jump=4, Fall=4,
+    // Dash=4, Attack=6, TakeHit=4, Death=9
+    a.create({ key: 'warrior-idle',     frames: a.generateFrameNumbers('warrior-idle',     { start: 0, end: 10 }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'warrior-run',      frames: a.generateFrameNumbers('warrior-run',      { start: 0, end: 7  }), frameRate: 10, repeat: -1 });
+    a.create({ key: 'warrior-jump',     frames: a.generateFrameNumbers('warrior-jump',     { start: 0, end: 3  }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'warrior-fall',     frames: a.generateFrameNumbers('warrior-fall',     { start: 0, end: 3  }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'warrior-dash',     frames: a.generateFrameNumbers('warrior-dash',     { start: 0, end: 3  }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'warrior-attack',   frames: a.generateFrameNumbers('warrior-attack',   { start: 0, end: 5  }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'warrior-take-hit', frames: a.generateFrameNumbers('warrior-take-hit', { start: 0, end: 3  }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'warrior-death',    frames: a.generateFrameNumbers('warrior-death',    { start: 0, end: 8  }), frameRate: 8,  repeat: 0  });
+  }
+
+  private createWizardAnims() {
+    const a = this.anims;
+    // Frame counts: Idle=6, Run=8, Jump=2, Fall=2, Attack1=8, Attack2=8, Hit=4, Death=7
+    a.create({ key: 'wizard-idle',    frames: a.generateFrameNumbers('wizard-idle',    { start: 0, end: 5 }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'wizard-run',     frames: a.generateFrameNumbers('wizard-run',     { start: 0, end: 7 }), frameRate: 10, repeat: -1 });
+    a.create({ key: 'wizard-jump',    frames: a.generateFrameNumbers('wizard-jump',    { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'wizard-fall',    frames: a.generateFrameNumbers('wizard-fall',    { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'wizard-attack1', frames: a.generateFrameNumbers('wizard-attack1', { start: 0, end: 7 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'wizard-attack2', frames: a.generateFrameNumbers('wizard-attack2', { start: 0, end: 7 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'wizard-hit',     frames: a.generateFrameNumbers('wizard-hit',     { start: 0, end: 3 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'wizard-death',   frames: a.generateFrameNumbers('wizard-death',   { start: 0, end: 6 }), frameRate: 8,  repeat: 0  });
+  }
+
+  private createArcherAnims() {
+    const a = this.anims;
+    // Frame counts: Idle=10, Run=8, Jump=2, Fall=2, Attack=6, GetHit=3, Death=10
+    a.create({ key: 'archer-idle',    frames: a.generateFrameNumbers('archer-idle',    { start: 0, end: 9 }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'archer-run',     frames: a.generateFrameNumbers('archer-run',     { start: 0, end: 7 }), frameRate: 10, repeat: -1 });
+    a.create({ key: 'archer-jump',    frames: a.generateFrameNumbers('archer-jump',    { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'archer-fall',    frames: a.generateFrameNumbers('archer-fall',    { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'archer-attack',  frames: a.generateFrameNumbers('archer-attack',  { start: 0, end: 5 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'archer-get-hit', frames: a.generateFrameNumbers('archer-get-hit', { start: 0, end: 2 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'archer-death',   frames: a.generateFrameNumbers('archer-death',   { start: 0, end: 9 }), frameRate: 8,  repeat: 0  });
+  }
+
+  // Switches the local player sprite to the correct texture, scale, and idle animation.
+  private initPlayerSprite(heroClass: string) {
+    this.mySprite.anims.stop();
+    this.currentAnimKey = '';
+
+    const prefix = heroClass.toLowerCase();
+    const scale  = CLASS_SCALE[heroClass] ?? 0.5;
+    this.mySprite.setTexture(`${prefix}-idle`, 0).setScale(scale).setAlpha(1);
+    this.playAnim(`${prefix}-idle`);
+  }
+
+  // Plays an animation on the local sprite only if it isn't already active,
+  // which prevents restarting from frame 0 on every update() call.
+  private playAnim(key: string) {
+    if (this.currentAnimKey === key) return;
+    this.currentAnimKey = key;
+    this.mySprite.play(key);
   }
 
   // ── Phaser lifecycle: update ───────────────────────────────────────────────
 
-  // Called every frame. delta is milliseconds since the last frame (~16ms at 60fps).
-  // All movement uses delta-time so the game speed is framerate-independent.
   update(_time: number, delta: number) {
     this.move(delta);
     this.sendPos(_time);
@@ -213,21 +276,19 @@ export class GameScene extends Phaser.Scene {
     this.drawAim();
   }
 
-  // ── Input ─────────────────────────────────────────────────────────────────
+  // ── Movement ───────────────────────────────────────────────────────────────
 
   // Move the local player based on which WASD keys are held down.
   // Movement is split per-axis so the player slides along walls instead of
   // sticking when one axis is blocked but the other is free.
   private move(delta: number) {
-    const s = this.SPEED * (delta / 1000);  // convert to pixels this frame
+    const s = this.SPEED * (delta / 1000);
     let dx = 0, dy = 0;
     if (this.kW.isDown) dy -= s;
     if (this.kS.isDown) dy += s;
     if (this.kA.isDown) dx -= s;
     if (this.kD.isDown) dx += s;
 
-    // Normalise diagonal movement so moving at 45° isn't faster than cardinal.
-    // 0.707 ≈ 1/√2 — the length of a unit diagonal vector.
     if (dx && dy) { dx *= 0.707; dy *= 0.707; }
 
     // Try X then Y separately; reject either step if it would put us in a wall.
@@ -240,9 +301,21 @@ export class GameScene extends Phaser.Scene {
       if (!this.wallAt(this.localX, ny)) this.localY = ny;
     }
 
-    // Move all objects that track the player's position.
-    this.myBody.setPosition(this.localX, this.localY);
-    this.myLabel.setPosition(this.localX, this.localY - 22);
+    this.mySprite.setPosition(this.localX, this.localY);
+    // Label floats above the top of the sprite frame.
+    const labelY = this.localY - this.mySprite.displayHeight / 2 - 10;
+    this.myLabel.setPosition(this.localX, labelY);
+
+    if (this.myHeroClass) {
+      if (dx < 0) this.mySprite.setFlipX(true);
+      else if (dx > 0) this.mySprite.setFlipX(false);
+
+      if (!LOCKED_ANIMS.has(this.currentAnimKey)) {
+        const moving = dx !== 0 || dy !== 0;
+        const prefix = this.myHeroClass.toLowerCase();
+        this.playAnim(moving ? `${prefix}-run` : `${prefix}-idle`);
+      }
+    }
   }
 
   // True if a 28×28 hit-box centered on (x, y) overlaps any wall tile.
@@ -269,11 +342,10 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  // Check for one-shot key presses (JustDown = true only on the frame the key
-  // goes from up to down, not while held). This prevents holding SPACE from
-  // spamming attacks faster than the server cooldown allows.
+  // ── Input ──────────────────────────────────────────────────────────────────
+
   private handleInput() {
-    if (!this.engine || !this.state) return;
+    if (!this.engine || !this.state || !this.myHeroClass) return;
 
     if (Phaser.Input.Keyboard.JustDown(this.kSpace)) {
       const ptr = this.input.activePointer;
@@ -284,8 +356,6 @@ export class GameScene extends Phaser.Scene {
       const ny = dist > 0 ? dy / dist : -1;
 
       if (this.myHeroClass === 'Warrior') {
-        // Warrior uses nearest-target so the attack reliably hits the closest enemy
-        // regardless of exact cursor angle — removes the "missed cone" confusion.
         this.engine.attackNearest();
         this.flashAttack(nx, ny, ATTACK_RANGE);
       } else if (dist > 0) {
@@ -297,7 +367,7 @@ export class GameScene extends Phaser.Scene {
 
     if (Phaser.Input.Keyboard.JustDown(this.kQ)) {
       const me = this.state.players.find(p => p.userId === this.myUserId);
-      if (!me?.canUseAbility) return;  // not enough resource — skip animation and server call
+      if (!me?.canUseAbility) return;
       const ptr = this.input.activePointer;
       const dx = ptr.worldX - this.localX;
       const dy = ptr.worldY - this.localY;
@@ -309,11 +379,8 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  // ── State update from server ──────────────────────────────────────────────
+  // ── State sync ─────────────────────────────────────────────────────────────
 
-  // Called every time the server sends a GameStateUpdate message.
-  // We reconcile the server snapshot with the current Phaser objects:
-  // create new sprites for new entities, update existing ones, destroy removed ones.
   private applyState(s: GameState) {
     // Room changed → rebuild room visuals, clear enemies, snap player to spawn.
     if (s.currentRoomIndex !== this.lastRoomIndex) {
@@ -327,77 +394,151 @@ export class GameScene extends Phaser.Scene {
       this.showRoomBanner(s.currentRoomIndex, s.currentRoom.type);
     }
 
-    // Check for HP drops before overwriting this.state so we can compare old vs new.
     this.showSkeletonProjectiles(s);
-
     this.state = s;
 
-    // Tint the local player's rectangle to match their hero class.
-    // Turn grey if dead so the player can see they're out of the fight.
+    // Make sure the local player never appears as an other-player sprite.
+    if (this.myUserId) this.destroyOther(this.myUserId);
+
+    // ── Local player ──
     const me = s.players.find(p => p.userId === this.myUserId);
     if (me) {
+      const prevClass = this.myHeroClass;
       this.myHeroClass = me.heroClass;
-      const col = CLASS_COLOR[me.heroClass] ?? 0x3498db;
-      this.myBody.setFillStyle(me.isAlive ? col : 0x555555);
+
+      // First time class is known (or if it changes) — swap sprite texture.
+      if (this.myHeroClass && this.myHeroClass !== prevClass) {
+        this.initPlayerSprite(this.myHeroClass);
+      }
+
+      const prefix  = this.myHeroClass.toLowerCase();
+      const hitKey  = this.myHeroClass === 'Archer' ? 'archer-get-hit'
+                    : this.myHeroClass === 'Wizard'  ? 'wizard-hit'
+                    : 'warrior-take-hit';
+      const deathKey = `${prefix}-death`;
+
+      if (!me.isAlive) {
+        if (this.currentAnimKey !== deathKey) {
+          this.currentAnimKey = deathKey;
+          this.mySprite.play(deathKey);
+        }
+        this.mySprite.setAlpha(0.7);
+      } else {
+        this.mySprite.setAlpha(1);
+        if (this.prevMyHp > 0 && me.currentHp < this.prevMyHp && !LOCKED_ANIMS.has(this.currentAnimKey)) {
+          this.currentAnimKey = hitKey;
+          this.mySprite.play(hitKey);
+          this.mySprite.once('animationcomplete', () => {
+            if (this.currentAnimKey === hitKey) {
+              const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
+              this.playAnim(moving ? `${prefix}-run` : `${prefix}-idle`);
+            }
+          });
+        }
+      }
+      this.prevMyHp = me.currentHp;
     }
 
-    // Sync other players: create sprites for new arrivals, update positions,
-    // destroy sprites for players who disconnected.
+    // ── Other players ──
     const myId = this.myUserId;
-    for (const p of s.players.filter(pl => pl.userId !== myId)) {
-      this.syncOther(p);
+    for (const p of s.players) {
+      if (p.userId !== myId) this.syncOther(p);
     }
     for (const [id] of this.others) {
-      if (!s.players.some(p => p.userId === id)) this.destroyOther(id);
+      if (!s.players.some(p => p.userId === id) || id === myId) this.destroyOther(id);
     }
 
-    // Sync enemies: create sprites for new enemies, update positions and
-    // play death animations, destroy sprites no longer in the room.
+    // ── Enemies ──
     for (const e of s.currentRoom.enemies) this.syncEnemy(e);
     for (const [id] of this.enemySprites) {
       if (!s.currentRoom.enemies.some(e => e.id === id)) this.destroyEnemy(id);
     }
   }
 
-  // Create or update the sprite for another player (not the local user).
+  // ── Other-player sprites ───────────────────────────────────────────────────
+
   private syncOther(p: PlayerState) {
+    if (p.userId === this.myUserId) return;
+
     let sp = this.others.get(p.userId);
+
     if (!sp) {
-      // First time seeing this player — create their rectangle and name tag.
-      const col = CLASS_COLOR[p.heroClass] ?? 0xffffff;
-      const body = this.add.rectangle(p.x, p.y, 28, 28, col).setDepth(9).setAlpha(0.85);
-      const label = this.add.text(p.x, p.y - 20, p.username, {
+      // New player — create their sprite with the correct class texture.
+      const prefix = p.heroClass.toLowerCase();
+      const scale  = CLASS_SCALE[p.heroClass] ?? 0.5;
+      const sprite = this.add.sprite(p.x, p.y, `${prefix}-idle`, 0)
+        .setDepth(9)
+        .setScale(scale)
+        .setAlpha(0.9);
+      sprite.play(`${prefix}-idle`);
+
+      const label = this.add.text(p.x, p.y - 45, p.username, {
         fontFamily: 'Courier New', fontSize: '10px', color: '#cccccc',
       }).setOrigin(0.5, 1).setDepth(10);
-      sp = { body, label };
+
+      sp = {
+        sprite, label,
+        heroClass: p.heroClass,
+        animKey:   `${prefix}-idle`,
+        prevX: p.x, prevY: p.y,
+        dead:  false,
+      };
       this.others.set(p.userId, sp);
     }
-    // Move to their latest server position and dim if dead.
-    sp.body.setPosition(p.x, p.y).setAlpha(p.isAlive ? 0.85 : 0.25);
-    sp.label.setPosition(p.x, p.y - 20);
+
+    if (!p.isAlive && !sp.dead) {
+      // Trigger death animation once.
+      sp.dead = true;
+      const deathKey = `${sp.heroClass.toLowerCase()}-death`;
+      sp.animKey = deathKey;
+      sp.sprite.play(deathKey);
+      sp.sprite.once('animationcomplete', () => { sp!.sprite.setAlpha(0.3); });
+      sp.label.setAlpha(0.3);
+
+    } else if (p.isAlive) {
+      // Move sprite to latest server position.
+      sp.sprite.setPosition(p.x, p.y).setAlpha(0.9);
+      const labelY = p.y - sp.sprite.displayHeight / 2 - 10;
+      sp.label.setPosition(p.x, labelY).setAlpha(1);
+
+      // Flip based on horizontal movement since last update.
+      const mdx = p.x - sp.prevX;
+      if (mdx < -1)      sp.sprite.setFlipX(true);
+      else if (mdx > 1)  sp.sprite.setFlipX(false);
+
+      // Switch between idle and run based on whether they moved.
+      if (!sp.dead) {
+        const moving  = Math.abs(p.x - sp.prevX) > 1 || Math.abs(p.y - sp.prevY) > 1;
+        const prefix  = sp.heroClass.toLowerCase();
+        const wantKey = moving ? `${prefix}-run` : `${prefix}-idle`;
+        if (sp.animKey !== wantKey) {
+          sp.animKey = wantKey;
+          sp.sprite.play(wantKey);
+        }
+      }
+    }
+
+    sp.prevX = p.x;
+    sp.prevY = p.y;
   }
 
-  // Create or update the sprite for one enemy.
+  // ── Enemy sprites (rectangles) ─────────────────────────────────────────────
+
   private syncEnemy(e: EnemyState) {
     let sp = this.enemySprites.get(e.id);
     if (!sp) {
-      // Bosses are larger (40px vs 28px) so they stand out visually.
       const isBoss = BOSS_NAMES.has(e.name);
-      const size = isBoss ? 40 : 28;
-      const col = ENEMY_COLOR[e.name] ?? 0xff4444;
-      const body = this.add.rectangle(e.x, e.y, size, size, col).setDepth(8);
-      const label = this.add.text(e.x, e.y - (size / 2 + 6), e.name, {
+      const size   = isBoss ? 40 : 28;
+      const col    = ENEMY_COLOR[e.name] ?? 0xff4444;
+      const body   = this.add.rectangle(e.x, e.y, size, size, col).setDepth(8);
+      const label  = this.add.text(e.x, e.y - (size / 2 + 6), e.name, {
         fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
       }).setOrigin(0.5, 1).setDepth(9);
-      // prevHp tracks the last known HP so we can detect when the enemy was hit.
       sp = { body, label, prevHp: e.health, dead: false };
       this.enemySprites.set(e.id, sp);
     }
 
     if (!e.isAlive && !sp.dead) {
-      // Play death animation: fade out and rotate 90° over 350ms.
-      // The onComplete callback hides the object after the tween finishes
-      // (destroyed properly in destroyEnemy when the server stops sending it).
       sp.dead = true;
       this.tweens.add({
         targets: [sp.body, sp.label],
@@ -405,11 +546,9 @@ export class GameScene extends Phaser.Scene {
         onComplete: () => { sp!.body.setVisible(false); sp!.label.setVisible(false); },
       });
     } else if (e.isAlive) {
-      // Move to latest server position.
       sp.body.setPosition(e.x, e.y);
       sp.label.setPosition(e.x, e.y - (sp.body.height / 2 + 6));
 
-      // Flash the sprite when health decreases — gives hit feedback without sounds.
       if (e.health < sp.prevHp) {
         this.tweens.add({
           targets: sp.body, alpha: 0.2, duration: 80, yoyo: true, repeat: 1,
@@ -420,46 +559,50 @@ export class GameScene extends Phaser.Scene {
     sp.prevHp = e.health;
   }
 
-  // ── HP bar rendering (drawn every frame) ──────────────────────────────────
+  // ── HP bars ────────────────────────────────────────────────────────────────
 
-  // HP bars are drawn imperatively with a Graphics object rather than as
-  // individual sprites, because their size changes every frame and using
-  // separate objects for every bar would be more complex to manage.
   private drawHpBars() {
-    // clear() wipes everything drawn last frame — we redraw from scratch each tick.
     this.hpBars.clear();
     if (!this.state) return;
 
-    // Draw the local player's HP bar above their sprite.
+    // Local player — bar sits just above the sprite's top edge.
     const me = this.state.players.find(p => p.userId === this.myUserId);
-    if (me) this.drawBar(this.localX, this.localY, me.currentHp, me.maxHp, 0x2ecc71);
-
-    // Draw HP bars for every other player.
-    for (const [id, sp] of this.others) {
-      const p = this.state.players.find(pl => pl.userId === id);
-      if (p && p.isAlive) this.drawBar(sp.body.x, sp.body.y, p.currentHp, p.maxHp, 0x2ecc71);
+    if (me && this.myHeroClass) {
+      const top = this.localY - this.mySprite.displayHeight / 2;
+      this.drawBar(this.localX, top - 8, me.currentHp, me.maxHp, 0x2ecc71);
     }
 
-    // Draw HP bars above each enemy. Width matches the enemy rectangle width.
+    // Other players.
+    for (const [id, sp] of this.others) {
+      const p = this.state.players.find(pl => pl.userId === id);
+      if (p && p.isAlive) {
+        const top = sp.sprite.y - sp.sprite.displayHeight / 2;
+        this.drawBar(sp.sprite.x, top - 8, p.currentHp, p.maxHp, 0x2ecc71);
+      }
+    }
+
+    // Enemies.
     for (const [id, sp] of this.enemySprites) {
       if (sp.dead) continue;
       const e = this.state.currentRoom.enemies.find(en => en.id === id);
-      if (e && e.isAlive) this.drawBar(sp.body.x, sp.body.y - sp.body.height / 2 - 8, e.health, e.maxHealth, 0xe74c3c, sp.body.width);
+      if (e && e.isAlive) {
+        const top = sp.body.y - sp.body.height / 2;
+        this.drawBar(sp.body.x, top - 8, e.health, e.maxHealth, 0xe74c3c, sp.body.width);
+      }
     }
   }
 
-  // Draw one HP bar: dark background, then colored fill proportional to hp/max.
   private drawBar(x: number, y: number, hp: number, max: number, color: number, width = 32) {
     if (max <= 0) return;
-    const bx = x - width / 2, by = y - 20;
-    const pct = Math.max(0, hp / max);     // clamp so bar never overflows
+    const bx  = x - width / 2;
+    const pct = Math.max(0, hp / max);
     this.hpBars.fillStyle(0x222222);
-    this.hpBars.fillRect(bx, by, width, 5);
+    this.hpBars.fillRect(bx, y, width, 5);
     this.hpBars.fillStyle(color);
-    this.hpBars.fillRect(bx, by, width * pct, 5);
+    this.hpBars.fillRect(bx, y, width * pct, 5);
   }
 
-  // ── Room drawing ──────────────────────────────────────────────────────────
+  // ── Room drawing ───────────────────────────────────────────────────────────
 
   private clearRoomVisuals() {
     this.roomMap?.destroy();
@@ -682,19 +825,24 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  // ── Visual effects ────────────────────────────────────────────────────────
+  // ── Visual effects ─────────────────────────────────────────────────────────
 
-  // Class-aware attack visual triggered immediately on SPACE press.
-  // nx/ny is the normalised aim direction; aimDist is how far the effect travels.
-  // This runs client-side for responsiveness — the server confirms actual hits.
   private flashAttack(nx: number, ny: number, aimDist: number) {
     const endX = this.localX + nx * aimDist;
     const endY = this.localY + ny * aimDist;
 
     if (this.myHeroClass === 'Warrior') {
-      // Filled 90° cone in the aim direction — matches the server's ±45° hit zone.
+      this.currentAnimKey = 'warrior-attack';
+      this.mySprite.play('warrior-attack');
+      this.mySprite.once('animationcomplete', () => {
+        if (this.currentAnimKey === 'warrior-attack') {
+          const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
+          this.playAnim(moving ? 'warrior-run' : 'warrior-idle');
+        }
+      });
+      // Filled 90° cone in the aim direction.
       const atkAngle = Math.atan2(ny, nx);
-      const half = Math.PI / 4;
+      const half     = Math.PI / 4;
       const g = this.add.graphics().setDepth(15);
       g.fillStyle(0xc9a84c, 0.45);
       g.beginPath();
@@ -702,33 +850,41 @@ export class GameScene extends Phaser.Scene {
       g.arc(this.localX, this.localY, ATTACK_RANGE, atkAngle - half, atkAngle + half, false);
       g.closePath();
       g.fillPath();
-      this.tweens.add({
-        targets: g, alpha: 0, duration: 250,
-        onComplete: () => g.destroy(),
-      });
+      this.tweens.add({ targets: g, alpha: 0, duration: 250, onComplete: () => g.destroy() });
+
     } else if (this.myHeroClass === 'Archer') {
-      // Thin green rectangle that flies toward the cursor — arrow in flight.
+      this.currentAnimKey = 'archer-attack';
+      this.mySprite.play('archer-attack');
+      this.mySprite.once('animationcomplete', () => {
+        if (this.currentAnimKey === 'archer-attack') {
+          const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
+          this.playAnim(moving ? 'archer-run' : 'archer-idle');
+        }
+      });
+      // Arrow flying toward the cursor.
       const arrow = this.add.rectangle(this.localX, this.localY, 16, 3, 0x27ae60).setDepth(15);
       arrow.rotation = Math.atan2(ny, nx);
-      this.tweens.add({
-        targets: arrow, x: endX, y: endY, duration: 220,
-        onComplete: () => arrow.destroy(),
-      });
+      this.tweens.add({ targets: arrow, x: endX, y: endY, duration: 220, onComplete: () => arrow.destroy() });
+
     } else if (this.myHeroClass === 'Wizard') {
-      // Purple orb that drifts toward the cursor — slower than an arrow.
-      const orb = this.add.arc(this.localX, this.localY, 9, 0, 360, false, 0x8e44ad, 0.9).setDepth(15);
-      this.tweens.add({
-        targets: orb, x: endX, y: endY, duration: 420, alpha: 0.15,
-        onComplete: () => orb.destroy(),
+      this.currentAnimKey = 'wizard-attack1';
+      this.mySprite.play('wizard-attack1');
+      this.mySprite.once('animationcomplete', () => {
+        if (this.currentAnimKey === 'wizard-attack1') {
+          const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
+          this.playAnim(moving ? 'wizard-run' : 'wizard-idle');
+        }
       });
+      // Purple orb drifting toward the cursor.
+      const orb = this.add.arc(this.localX, this.localY, 9, 0, 360, false, 0x8e44ad, 0.9).setDepth(15);
+      this.tweens.add({ targets: orb, x: endX, y: endY, duration: 420, alpha: 0.15, onComplete: () => orb.destroy() });
     }
   }
 
-  // Class-specific Q ability visual triggered immediately on Q press.
-  // Replicates the server's FindRayTarget logic to predict where the fireball will hit.
-  // Returns the impact point so the orb animation can stop and explode there.
+  // Client-side ray-cast that mirrors the server's FindRayTarget so the fireball
+  // burst lands on the first enemy hit rather than at max range.
   private findFireballImpact(nx: number, ny: number): { x: number; y: number } {
-    const range    = CLASS_RANGE['Wizard'];
+    const range     = CLASS_RANGE['Wizard'];
     const hitRadius = HIT_RADIUS['Wizard'] ?? 28;
     let bestT = range;
 
@@ -739,67 +895,82 @@ export class GameScene extends Phaser.Scene {
         const ey = e.y - this.localY;
         const t  = ex * nx + ey * ny;
         if (t < 0 || t >= bestT) continue;
-        const cx = this.localX + nx * t;
-        const cy = this.localY + ny * t;
+        const cx   = this.localX + nx * t;
+        const cy   = this.localY + ny * t;
         const perp = Math.sqrt((cx - e.x) ** 2 + (cy - e.y) ** 2);
         if (perp <= hitRadius) bestT = t;
       }
     }
-
     return { x: this.localX + nx * bestT, y: this.localY + ny * bestT };
   }
 
   private flashAbility(nx: number, ny: number) {
     if (this.myHeroClass === 'Warrior') {
-      // Shield Block: expanding golden ring — communicates a defensive stance.
-      const ring = this.add.arc(this.localX, this.localY, 22, 0, 360, false, 0xc9a84c, 0.75).setDepth(15);
-      this.tweens.add({
-        targets: ring, scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 420,
-        onComplete: () => ring.destroy(),
+      this.currentAnimKey = 'warrior-dash';
+      this.mySprite.play('warrior-dash');
+      this.mySprite.once('animationcomplete', () => {
+        if (this.currentAnimKey === 'warrior-dash') {
+          const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
+          this.playAnim(moving ? 'warrior-run' : 'warrior-idle');
+        }
       });
+      const ring = this.add.arc(this.localX, this.localY, 22, 0, 360, false, 0xc9a84c, 0.75).setDepth(15);
+      this.tweens.add({ targets: ring, scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 420, onComplete: () => ring.destroy() });
+
     } else if (this.myHeroClass === 'Archer') {
-      // Multi-Shot: three arrows in a ±15° spread — must match server logic.
+      this.currentAnimKey = 'archer-attack';
+      this.mySprite.play('archer-attack');
+      this.mySprite.once('animationcomplete', () => {
+        if (this.currentAnimKey === 'archer-attack') {
+          const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
+          this.playAnim(moving ? 'archer-run' : 'archer-idle');
+        }
+      });
+      // Multi-Shot: three arrows in a ±15° spread.
       const centerAngle = Math.atan2(ny, nx);
-      const spread = Math.PI / 12;
-      const range  = CLASS_RANGE['Archer'];
+      const spread      = Math.PI / 12;
+      const range       = CLASS_RANGE['Archer'];
       [-spread, 0, spread].forEach(offset => {
         const angle = centerAngle + offset;
-        const adx = Math.cos(angle);
-        const ady = Math.sin(angle);
         const arrow = this.add.rectangle(this.localX, this.localY, 18, 3, 0x27ae60).setDepth(15);
         arrow.rotation = angle;
         this.tweens.add({
-          targets: arrow, x: this.localX + adx * range, y: this.localY + ady * range,
+          targets: arrow,
+          x: this.localX + Math.cos(angle) * range,
+          y: this.localY + Math.sin(angle) * range,
           duration: 210,
           onComplete: () => arrow.destroy(),
         });
       });
+
     } else if (this.myHeroClass === 'Wizard') {
-      // Fireball: orb travels toward the first enemy on the ray, bursts on impact.
-      // Client-side ray-cast mirrors server logic so the explosion lands on the target.
+      this.currentAnimKey = 'wizard-attack2';
+      this.mySprite.play('wizard-attack2');
+      this.mySprite.once('animationcomplete', () => {
+        if (this.currentAnimKey === 'wizard-attack2') {
+          const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
+          this.playAnim(moving ? 'wizard-run' : 'wizard-idle');
+        }
+      });
       const { x: impactX, y: impactY } = this.findFireballImpact(nx, ny);
-      const dx = impactX - this.localX;
-      const dy = impactY - this.localY;
-      const travelDist = Math.sqrt(dx * dx + dy * dy);
-      const duration = Math.max(120, (travelDist / CLASS_RANGE['Wizard']) * 480);
+      const tdx      = impactX - this.localX;
+      const tdy      = impactY - this.localY;
+      const dist     = Math.sqrt(tdx * tdx + tdy * tdy);
+      const duration = Math.max(120, (dist / CLASS_RANGE['Wizard']) * 480);
       const orb = this.add.arc(this.localX, this.localY, 11, 0, 360, false, 0xe67e22, 0.95).setDepth(15);
       this.tweens.add({
         targets: orb, x: impactX, y: impactY, duration,
         onComplete: () => {
           orb.destroy();
           const burst = this.add.arc(impactX, impactY, 12, 0, 360, false, 0xe67e22, 0.7).setDepth(15);
-          this.tweens.add({
-            targets: burst, scaleX: 7, scaleY: 7, alpha: 0, duration: 300,
-            onComplete: () => burst.destroy(),
-          });
+          this.tweens.add({ targets: burst, scaleX: 7, scaleY: 7, alpha: 0, duration: 300, onComplete: () => burst.destroy() });
         },
       });
     }
   }
 
-  // Redraws the directional aim indicator every frame based on current mouse position.
-  // Warrior: a 90° cone (two lines + arc) showing the melee swing sector.
-  // Archer/Wizard: a thin aim line toward the cursor with a hit-box circle at the tip.
+  // ── Aim indicator (redrawn every frame) ────────────────────────────────────
+
   private drawAim() {
     this.aimGraphics.clear();
     if (!this.myHeroClass || !this.state) return;
@@ -807,9 +978,9 @@ export class GameScene extends Phaser.Scene {
     const me = this.state.players.find(p => p.userId === this.myUserId);
     if (!me || !me.isAlive) return;
 
-    const ptr = this.input.activePointer;
-    const dx = ptr.worldX - this.localX;
-    const dy = ptr.worldY - this.localY;
+    const ptr  = this.input.activePointer;
+    const dx   = ptr.worldX - this.localX;
+    const dy   = ptr.worldY - this.localY;
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist < 1) return;
 
@@ -817,42 +988,29 @@ export class GameScene extends Phaser.Scene {
     const ny = dy / dist;
 
     if (this.myHeroClass === 'Warrior') {
-      const range = ATTACK_RANGE;
-      const half = Math.PI / 4;  // 45°
+      const half  = Math.PI / 4;
       const angle = Math.atan2(ny, nx);
-      const a1 = angle - half;
-      const a2 = angle + half;
-
+      const a1    = angle - half;
+      const a2    = angle + half;
       this.aimGraphics.lineStyle(1.5, 0xc9a84c, 0.55);
-      // Two lines from player forming the cone edges.
-      this.aimGraphics.lineBetween(
-        this.localX, this.localY,
-        this.localX + Math.cos(a1) * range, this.localY + Math.sin(a1) * range,
-      );
-      this.aimGraphics.lineBetween(
-        this.localX, this.localY,
-        this.localX + Math.cos(a2) * range, this.localY + Math.sin(a2) * range,
-      );
-      // Arc closing the cone tip.
+      this.aimGraphics.lineBetween(this.localX, this.localY, this.localX + Math.cos(a1) * ATTACK_RANGE, this.localY + Math.sin(a1) * ATTACK_RANGE);
+      this.aimGraphics.lineBetween(this.localX, this.localY, this.localX + Math.cos(a2) * ATTACK_RANGE, this.localY + Math.sin(a2) * ATTACK_RANGE);
       this.aimGraphics.beginPath();
-      this.aimGraphics.arc(this.localX, this.localY, range, a1, a2, false);
+      this.aimGraphics.arc(this.localX, this.localY, ATTACK_RANGE, a1, a2, false);
       this.aimGraphics.strokePath();
     } else {
       const range = CLASS_RANGE[this.myHeroClass] ?? 600;
       const hitR  = HIT_RADIUS[this.myHeroClass] ?? 16;
       const endX  = this.localX + nx * range;
       const endY  = this.localY + ny * range;
-
       this.aimGraphics.lineStyle(1, 0xc9a84c, 0.35);
       this.aimGraphics.lineBetween(this.localX, this.localY, endX, endY);
-      // Small circle at the tip representing the projectile hit-box size.
       this.aimGraphics.strokeCircle(endX, endY, hitR);
     }
   }
 
-  // Animate a bone projectile from any alive Skeleton that is in attack range of
-  // a player whose HP just dropped. Called before this.state is updated so we can
-  // compare the incoming snapshot against the previous one.
+  // ── Skeleton projectile visuals ────────────────────────────────────────────
+
   private showSkeletonProjectiles(s: GameState) {
     const skeletons = s.currentRoom.enemies.filter(e => e.name === 'Skeleton' && e.isAlive);
     if (!skeletons.length) return;
@@ -860,49 +1018,40 @@ export class GameScene extends Phaser.Scene {
     for (const player of s.players) {
       const prevHp = this.prevPlayerHp.get(player.userId) ?? player.currentHp;
       this.prevPlayerHp.set(player.userId, player.currentHp);
-
       if (!player.isAlive || player.currentHp >= prevHp) continue;
 
-      // Resolve where the player is on screen.
       const targetX = player.userId === this.myUserId
         ? this.localX
-        : (this.others.get(player.userId)?.body.x ?? player.x);
+        : (this.others.get(player.userId)?.sprite.x ?? player.x);
       const targetY = player.userId === this.myUserId
         ? this.localY
-        : (this.others.get(player.userId)?.body.y ?? player.y);
+        : (this.others.get(player.userId)?.sprite.y ?? player.y);
 
-      // Fire a visual projectile from every skeleton within shooting range.
       for (const sk of skeletons) {
-        const dx = targetX - sk.x;
-        const dy = targetY - sk.y;
-        if (dx * dx + dy * dy > 260 * 260) continue;  // slightly beyond ProjectileRange
+        const sdx = targetX - sk.x;
+        const sdy = targetY - sk.y;
+        if (sdx * sdx + sdy * sdy > 260 * 260) continue;
         const proj = this.add.arc(sk.x, sk.y, 5, 0, 360, false, 0xbdc3c7, 0.9).setDepth(15);
-        this.tweens.add({
-          targets: proj, x: targetX, y: targetY, duration: 280,
-          onComplete: () => proj.destroy(),
-        });
+        this.tweens.add({ targets: proj, x: targetX, y: targetY, duration: 280, onComplete: () => proj.destroy() });
       }
     }
   }
 
-  // ── Cleanup ───────────────────────────────────────────────────────────────
+  // ── Cleanup ────────────────────────────────────────────────────────────────
 
-  // Removes all enemy sprites from the scene (called on room transition).
   private clearEnemies() {
     for (const [id] of this.enemySprites) this.destroyEnemy(id);
   }
 
-  // Destroys a single enemy's Phaser game objects and removes them from the Map.
   private destroyEnemy(id: string) {
     const sp = this.enemySprites.get(id);
     if (sp) { sp.body.destroy(); sp.label.destroy(); }
     this.enemySprites.delete(id);
   }
 
-  // Destroys another player's sprites (called when they disconnect).
   private destroyOther(id: string) {
     const sp = this.others.get(id);
-    if (sp) { sp.body.destroy(); sp.label.destroy(); }
+    if (sp) { sp.sprite.destroy(); sp.label.destroy(); }
     this.others.delete(id);
   }
 }
