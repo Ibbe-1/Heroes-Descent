@@ -19,21 +19,22 @@ const CLASS_SCALE: Record<string, number> = {
 };
 
 const ENEMY_COLOR: Record<string, number> = {
-  Skeleton:           0xbdc3c7,
-  Goblin:             0x2ecc71,
-  Spider:             0x6c3483,
-  'Bone Titan':       0xe74c3c,
-  'Ancient Colossus': 0xe74c3c,
-  'Dungeon Overlord': 0xff0000,
+  Skeleton: 0xbdc3c7,
+  Goblin:   0x2ecc71,
+  Spider:   0x6c3483,
 };
-const BOSS_NAMES = new Set(['Bone Titan', 'Ancient Colossus', 'Dungeon Overlord']);
+const BOSS_NAMES = new Set(['Dark Mage']);
 
-// Enemies are still rendered as coloured rectangles.
+// Regular enemies render as coloured rectangles; the Dark Mage boss uses an animated sprite.
 interface EnemySprite {
-  body:   Phaser.GameObjects.Rectangle;
-  label:  Phaser.GameObjects.Text;
-  prevHp: number;
-  dead:   boolean;
+  body:    Phaser.GameObjects.Rectangle | null;
+  sprite:  Phaser.GameObjects.Sprite    | null;
+  label:   Phaser.GameObjects.Text      | null;
+  prevHp:  number;
+  dead:    boolean;
+  prevX:   number;
+  prevY:   number;
+  animKey: string;
 }
 
 // Other players are rendered as animated sprites.
@@ -122,6 +123,15 @@ export class GameScene extends Phaser.Scene {
     this.load.spritesheet('archer-attack',  '/assets/Archer/Character/Attack.png',  { frameWidth: 100, frameHeight: 100 });
     this.load.spritesheet('archer-get-hit', '/assets/Archer/Character/Get Hit.png', { frameWidth: 100, frameHeight: 100 });
     this.load.spritesheet('archer-death',   '/assets/Archer/Character/Death.png',   { frameWidth: 100, frameHeight: 100 });
+
+    // Dark Mage boss — 250×250 frames
+    this.load.spritesheet('boss-idle',     '/assets/Darkmage/Idle.png',     { frameWidth: 250, frameHeight: 250 });
+    this.load.spritesheet('boss-run',      '/assets/Darkmage/Run.png',      { frameWidth: 250, frameHeight: 250 });
+    this.load.spritesheet('boss-attack',   '/assets/Darkmage/Attack2.png',  { frameWidth: 250, frameHeight: 250 });
+    this.load.spritesheet('boss-take-hit', '/assets/Darkmage/Take hit.png', { frameWidth: 250, frameHeight: 250 });
+    this.load.spritesheet('boss-death',    '/assets/Darkmage/Death.png',    { frameWidth: 250, frameHeight: 250 });
+    this.load.spritesheet('boss-jump',     '/assets/Darkmage/Jump.png',     { frameWidth: 250, frameHeight: 250 });
+    this.load.spritesheet('boss-fall',     '/assets/Darkmage/Fall.png',     { frameWidth: 250, frameHeight: 250 });
   }
 
   // ── Phaser lifecycle: create ───────────────────────────────────────────────
@@ -131,6 +141,7 @@ export class GameScene extends Phaser.Scene {
     this.createWarriorAnims();
     this.createWizardAnims();
     this.createArcherAnims();
+    this.createDarkMageAnims();
 
     this.hpBars      = this.add.graphics().setDepth(20);
     this.aimGraphics = this.add.graphics().setDepth(6);
@@ -231,6 +242,18 @@ export class GameScene extends Phaser.Scene {
     a.create({ key: 'archer-attack',  frames: a.generateFrameNumbers('archer-attack',  { start: 0, end: 5 }), frameRate: 12, repeat: 0  });
     a.create({ key: 'archer-get-hit', frames: a.generateFrameNumbers('archer-get-hit', { start: 0, end: 2 }), frameRate: 10, repeat: 0  });
     a.create({ key: 'archer-death',   frames: a.generateFrameNumbers('archer-death',   { start: 0, end: 9 }), frameRate: 8,  repeat: 0  });
+  }
+
+  private createDarkMageAnims() {
+    const a = this.anims;
+    // Frame counts: Idle=8, Run=8, Attack=8, TakeHit=3, Death=7, Jump=2, Fall=2
+    a.create({ key: 'boss-idle',     frames: a.generateFrameNumbers('boss-idle',     { start: 0, end: 7 }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'boss-run',      frames: a.generateFrameNumbers('boss-run',      { start: 0, end: 7 }), frameRate: 10, repeat: -1 });
+    a.create({ key: 'boss-attack',   frames: a.generateFrameNumbers('boss-attack',   { start: 0, end: 7 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'boss-take-hit', frames: a.generateFrameNumbers('boss-take-hit', { start: 0, end: 2 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'boss-death',    frames: a.generateFrameNumbers('boss-death',    { start: 0, end: 6 }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'boss-jump',     frames: a.generateFrameNumbers('boss-jump',     { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'boss-fall',     frames: a.generateFrameNumbers('boss-fall',     { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
   }
 
   // Switches the local player sprite to the correct texture, scale, and idle animation.
@@ -485,35 +508,86 @@ export class GameScene extends Phaser.Scene {
   private syncEnemy(e: EnemyState) {
     let sp = this.enemySprites.get(e.id);
     if (!sp) {
-      const isBoss = BOSS_NAMES.has(e.name);
-      const size   = isBoss ? 40 : 28;
-      const col    = ENEMY_COLOR[e.name] ?? 0xff4444;
-      const body   = this.add.rectangle(e.x, e.y, size, size, col).setDepth(8);
-      const label  = this.add.text(e.x, e.y - (size / 2 + 6), e.name, {
-        fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
-      }).setOrigin(0.5, 1).setDepth(9);
-      sp = { body, label, prevHp: e.health, dead: false };
+      if (e.name === 'Dark Mage') {
+        const spr = this.add.sprite(e.x, e.y, 'boss-idle', 0).setDepth(8).setScale(0.96);
+        spr.play('boss-idle');
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 22, 'Dark Mage', {
+          fontFamily: 'Courier New', fontSize: '10px', color: '#ffffff',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'boss-idle' };
+      } else {
+        const size  = 28;
+        const col   = ENEMY_COLOR[e.name] ?? 0xff4444;
+        const body  = this.add.rectangle(e.x, e.y, size, size, col).setDepth(8);
+        const label = this.add.text(e.x, e.y - (size / 2 + 6), e.name, {
+          fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body, sprite: null, label, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '' };
+      }
       this.enemySprites.set(e.id, sp);
     }
 
     if (!e.isAlive && !sp.dead) {
       sp.dead = true;
-      this.tweens.add({
-        targets: [sp.body, sp.label],
-        alpha: 0, angle: 90, duration: 350,
-        onComplete: () => { sp!.body.setVisible(false); sp!.label.setVisible(false); },
-      });
-    } else if (e.isAlive) {
-      sp.body.setPosition(e.x, e.y);
-      sp.label.setPosition(e.x, e.y - (sp.body.height / 2 + 6));
-
-      if (e.health < sp.prevHp) {
+      if (sp.sprite) {
+        sp.animKey = 'boss-death';
+        sp.sprite.play('boss-death');
+        sp.label?.setAlpha(0);
+        sp.sprite.once('animationcomplete', () => {
+          this.tweens.add({
+            targets: sp!.sprite, alpha: 0, duration: 500,
+            onComplete: () => sp!.sprite?.setVisible(false),
+          });
+        });
+      } else {
         this.tweens.add({
-          targets: sp.body, alpha: 0.2, duration: 80, yoyo: true, repeat: 1,
-          onComplete: () => sp!.body.setAlpha(1),
+          targets: [sp.body, sp.label],
+          alpha: 0, angle: 90, duration: 350,
+          onComplete: () => { sp!.body?.setVisible(false); sp!.label?.setVisible(false); },
         });
       }
+    } else if (e.isAlive) {
+      if (sp.sprite) {
+        sp.sprite.setPosition(e.x, e.y);
+        sp.label?.setPosition(e.x, e.y - sp.sprite.displayHeight / 2 - 22);
+
+        const mdx = e.x - sp.prevX;
+        if (mdx < -1)     sp.sprite.setFlipX(true);
+        else if (mdx > 1) sp.sprite.setFlipX(false);
+
+        const locked = sp.animKey === 'boss-take-hit' || sp.animKey === 'boss-death' || sp.animKey === 'boss-attack';
+        if (e.health < sp.prevHp && !locked) {
+          sp.animKey = 'boss-take-hit';
+          sp.sprite.play('boss-take-hit');
+          sp.sprite.once('animationcomplete', () => {
+            if (sp!.animKey === 'boss-take-hit') {
+              const moving = Math.abs(e.x - sp!.prevX) > 1 || Math.abs(e.y - sp!.prevY) > 1;
+              sp!.animKey = moving ? 'boss-run' : 'boss-idle';
+              sp!.sprite?.play(sp!.animKey);
+            }
+          });
+        } else if (!locked) {
+          const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
+          const want   = moving ? 'boss-run' : 'boss-idle';
+          if (sp.animKey !== want) {
+            sp.animKey = want;
+            sp.sprite.play(want);
+          }
+        }
+      } else {
+        sp.body!.setPosition(e.x, e.y);
+        sp.label?.setPosition(e.x, e.y - (sp.body!.height / 2 + 6));
+
+        if (e.health < sp.prevHp) {
+          this.tweens.add({
+            targets: sp.body, alpha: 0.2, duration: 80, yoyo: true, repeat: 1,
+            onComplete: () => sp!.body?.setAlpha(1),
+          });
+        }
+      }
     }
+    sp.prevX  = e.x;
+    sp.prevY  = e.y;
     sp.prevHp = e.health;
   }
 
@@ -543,7 +617,11 @@ export class GameScene extends Phaser.Scene {
     for (const [id, sp] of this.enemySprites) {
       if (sp.dead) continue;
       const e = this.state.currentRoom.enemies.find(en => en.id === id);
-      if (e && e.isAlive) {
+      if (!e || !e.isAlive) continue;
+      if (sp.sprite) {
+        const top = sp.sprite.y - sp.sprite.displayHeight / 2;
+        this.drawBar(sp.sprite.x, top - 8, e.health, e.maxHealth, 0x8e44ad, 60);
+      } else if (sp.body) {
         const top = sp.body.y - sp.body.height / 2;
         this.drawBar(sp.body.x, top - 8, e.health, e.maxHealth, 0xe74c3c, sp.body.width);
       }
@@ -957,7 +1035,15 @@ export class GameScene extends Phaser.Scene {
 
   private showSkeletonProjectiles(s: GameState) {
     const skeletons = s.currentRoom.enemies.filter(e => e.name === 'Skeleton' && e.isAlive);
-    if (!skeletons.length) return;
+
+    // Find the Dark Mage boss sprite if one exists in this room.
+    let bossSp: EnemySprite | undefined;
+    for (const [id, sp] of this.enemySprites) {
+      if (sp.sprite && !sp.dead) {
+        const bossEnemy = s.currentRoom.enemies.find(e => e.id === id && e.isAlive);
+        if (bossEnemy) { bossSp = sp; break; }
+      }
+    }
 
     for (const player of s.players) {
       const prevHp = this.prevPlayerHp.get(player.userId) ?? player.currentHp;
@@ -971,12 +1057,28 @@ export class GameScene extends Phaser.Scene {
         ? this.localY
         : (this.others.get(player.userId)?.sprite.y ?? player.y);
 
+      // Skeleton bone projectile toward the player who was hit.
       for (const sk of skeletons) {
         const sdx = targetX - sk.x;
         const sdy = targetY - sk.y;
         if (sdx * sdx + sdy * sdy > 260 * 260) continue;
         const proj = this.add.arc(sk.x, sk.y, 5, 0, 360, false, 0xbdc3c7, 0.9).setDepth(15);
         this.tweens.add({ targets: proj, x: targetX, y: targetY, duration: 280, onComplete: () => proj.destroy() });
+      }
+
+      // Dark Mage attack animation when a player is hit.
+      if (bossSp?.sprite) {
+        const locked = bossSp.animKey === 'boss-take-hit' || bossSp.animKey === 'boss-death' || bossSp.animKey === 'boss-attack';
+        if (!locked) {
+          bossSp.animKey = 'boss-attack';
+          bossSp.sprite.play('boss-attack');
+          bossSp.sprite.once('animationcomplete', () => {
+            if (bossSp!.animKey === 'boss-attack') {
+              bossSp!.animKey = 'boss-idle';
+              bossSp!.sprite?.play('boss-idle');
+            }
+          });
+        }
       }
     }
   }
@@ -989,7 +1091,11 @@ export class GameScene extends Phaser.Scene {
 
   private destroyEnemy(id: string) {
     const sp = this.enemySprites.get(id);
-    if (sp) { sp.body.destroy(); sp.label.destroy(); }
+    if (sp) {
+      sp.body?.destroy();
+      sp.sprite?.destroy();
+      sp.label?.destroy();
+    }
     this.enemySprites.delete(id);
   }
 
