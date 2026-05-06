@@ -117,50 +117,50 @@ export default function GamePage({ username, userId, onBack }: Props) {
 
   // Refs hold the Phaser game instance and the SignalR engine so they persist
   // across re-renders without triggering extra effects.
-  const containerRef = useRef<HTMLDivElement>(null);
-  const gameRef      = useRef<Phaser.Game | null>(null);
-  const engineRef    = useRef<GameEngine | null>(null);
+  const containerRef    = useRef<HTMLDivElement>(null);
+  const gameRef         = useRef<Phaser.Game | null>(null);
+  const engineRef       = useRef<GameEngine | null>(null);
+  // Always holds the latest gameState so we can replay it after Phaser finishes loading.
+  const latestStateRef  = useRef<GameState | null>(null);
+
+  // Keep latestStateRef in sync with gameState on every render.
+  latestStateRef.current = gameState;
 
   // ── Effect: mount Phaser when entering the 'playing' phase ───────────────
 
-  // useEffect runs after the DOM is ready, so containerRef.current is guaranteed
-  // to exist by the time we create the Phaser game.
   useEffect(() => {
     if (phase !== 'playing' || !containerRef.current) return;
 
     const config: Phaser.Types.Core.GameConfig = {
-      type: Phaser.AUTO,    // auto-selects WebGL if available, else Canvas
+      type: Phaser.AUTO,
       backgroundColor: '#07070d',
       scene: [GameScene],
-      parent: containerRef.current,  // mounts the <canvas> inside our div
+      parent: containerRef.current,
       scale: {
-        // FIT scales the fixed 960×640 canvas to fill the available space
-        // while preserving the aspect ratio. This keeps pixel positions consistent
-        // regardless of the browser window size.
         mode: Phaser.Scale.FIT,
         autoCenter: Phaser.Scale.CENTER_BOTH,
         width: 960,
         height: 640,
       },
-      render: { antialias: false },  // pixel-art style — sharp edges
+      render: { antialias: false },
     };
 
     const game = new Phaser.Game(config);
     gameRef.current = game;
 
-    // Pass the engine and player identity into the Phaser scene.
-    // We use the event bus rather than constructor arguments because the scene
-    // is instantiated internally by Phaser and we can't pass props directly.
-    const send = () => {
-      game.events.emit('setEngine', engineRef.current);
-      game.events.emit('setUserId', userId);
-      game.events.emit('setUsername', username);
-    };
-
-    // 'ready' fires when Phaser finishes its own initialization.
-    // The setTimeout is a fallback in case 'ready' already fired before we could listen.
-    game.events.once('ready', send);
-    setTimeout(send, 100);
+    // GameScene emits 'sceneReady' at the very end of create(), after registering
+    // all its event listeners.  We wait for that signal so our emits are never
+    // dropped into a void.  heroClass is sent explicitly so the sprite is visible
+    // from the first update() tick — no dependency on server state timing.
+    game.events.once('sceneReady', () => {
+      game.events.emit('setEngine',    engineRef.current);
+      game.events.emit('setUserId',    userId);
+      game.events.emit('setUsername',  username);
+      game.events.emit('setHeroClass', heroClass);
+      if (latestStateRef.current) {
+        game.events.emit('stateUpdate', latestStateRef.current);
+      }
+    });
 
     // Destroy the Phaser game when the component unmounts or phase changes away.
     // true = also remove the <canvas> element from the DOM.
