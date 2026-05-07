@@ -12,7 +12,8 @@
       "Bash(Select-Object -First 100)",
       "Bash(Format-Table FullName)",
       "Bash(npx tsc *)",
-      "Bash(Select-Object -Property FullName)"
+      "Bash(Select-Object -Property FullName)",
+      "Bash(python3 *)"
     ]
   }
 }
