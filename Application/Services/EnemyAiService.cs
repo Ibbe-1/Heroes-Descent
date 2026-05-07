@@ -69,11 +69,20 @@ public class EnemyAiService : BackgroundService
                         // Step 1: slide every enemy toward the nearest player.
                         _game.MoveEnemies(session, deltaMs);
 
-                        // Step 2: if enough time has passed, try to deal damage.
-                        // TickEnemyAttacks has its own internal 800 ms guard so
-                        // it does nothing if called too soon.
+                        // Step 2: decide whether any enemy attacks this tick and apply damage.
+                        // The boss may also spawn a new fireball here (ranged shot on its own cooldown).
                         var attackLog = _game.TickEnemyAttacks(session);
                         session.AddLogRange(attackLog);
+                    }
+
+                    // Step 3: advance every fireball that is currently in flight.
+                    // Runs even if all enemies are dead — a fireball fired in the boss's
+                    // last moment should still be able to hit a player.
+                    // MoveProjectiles returns a log entry if a player is hit.
+                    if (session.ActiveProjectiles.Count > 0)
+                    {
+                        var projLog = _game.MoveProjectiles(session, deltaMs);
+                        session.AddLogRange(projLog);
                     }
 
                     // Build the DTO inside the lock so it captures a consistent snapshot.

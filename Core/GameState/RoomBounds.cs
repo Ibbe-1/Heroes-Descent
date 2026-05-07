@@ -37,6 +37,15 @@ public static class RoomBounds
     // How close an enemy must be to a player before it can deal damage
     public const float EnemyAttackRange  = 80f;
 
+    // Dark Mage boss combat ranges
+    // ≤ BossMeleeRange        → melee attack (global 800 ms tick)
+    // BossMeleeRange–BossRangedMax → ranged fireball (per-boss 1 400 ms cooldown)
+    // > BossRangedMax         → chase only, no attacks
+    public const float BossMeleeRange       = 80f;
+    public const float BossRangedMax        = 320f;
+    public const float BossRangedCooldownMs = 1400f;
+    public const float BossStopDistance     = 70f;
+
     // Enemies won't spawn within this radius of the room centre,
     // giving the party a safe landing zone at the start of each room
     public const float EnemyMinSpawnDist = 200f;

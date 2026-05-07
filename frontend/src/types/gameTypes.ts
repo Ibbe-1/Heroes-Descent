@@ -10,6 +10,15 @@
 
 export type HeroClass = 'Warrior' | 'Wizard' | 'Archer';
 
+// A fireball currently flying through the room.
+// The server updates its position every 100 ms tick; when it disappears from the
+// list it either hit a player or ran out of range — show an impact burst either way.
+export interface ActiveProjectile {
+  id: string;  // matches a sprite the frontend is already tracking
+  x: number;
+  y: number;
+}
+
 // One enemy currently in the room.
 // x / y are pixel coordinates in the 960 × 640 game canvas space —
 // the Phaser scene uses them to position the enemy's rectangle sprite.
@@ -69,4 +78,5 @@ export interface GameState {
   log: string[];        // last 15 combat log lines
   isGameOver: boolean;
   isVictory: boolean;
+  activeProjectiles: ActiveProjectile[];  // fireballs currently in flight (empty most ticks)
 }

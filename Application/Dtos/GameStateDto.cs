@@ -10,6 +10,12 @@ namespace Heroes_Descent.Application.Dtos;
 // The matching TypeScript interfaces live in frontend/src/types/gameTypes.ts.
 // Keep both files in sync: adding a field here means adding it there too.
 
+// A fireball currently in flight — position is updated every AI tick.
+// The frontend places the sprite at (X, Y) each update.
+// When this ID disappears from the list the fireball either hit a player or
+// expired (MaxRange reached) — the frontend shows a small impact burst either way.
+public record ActiveProjectileDto(string Id, float X, float Y);
+
 // The root object broadcast to all clients after any game event.
 // Contains everything the frontend needs to render one frame of the game.
 public record GameStateDto(
@@ -20,7 +26,8 @@ public record GameStateDto(
     List<PlayerDto> Players,
     List<string> Log,          // last 15 combat log lines
     bool IsGameOver,
-    bool IsVictory
+    bool IsVictory,
+    List<ActiveProjectileDto> ActiveProjectiles  // fireballs currently in flight (empty most ticks)
 );
 
 // Describes the room the party is currently in.
