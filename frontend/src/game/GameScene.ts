@@ -375,6 +375,8 @@ export class GameScene extends Phaser.Scene {
     a.create({ key: 'golem-laser-charge', frames: a.generateFrameNumbers('golem-laser', { start: 0, end: 7 }), frameRate: 8, repeat: -1 });
     // Laser beam fire — full beam extending (frames 8–14, play once when the shot lands)
     a.create({ key: 'golem-laser-fire', frames: a.generateFrameNumbers('golem-laser', { start: 8, end: 14 }), frameRate: 12, repeat: 0 });
+  }
+
   private createGoblinAnims() {
     const a = this.anims;
     a.create({ key: 'goblin-attack', frames: a.generateFrameNumbers('goblin-attack', { start: 0, end: 11 }), frameRate: 10, repeat: 0 });
@@ -708,7 +710,6 @@ export class GameScene extends Phaser.Scene {
           fontFamily: 'Courier New', fontSize: '10px', color: '#aabbcc',
         }).setOrigin(0.5, 1).setDepth(9);
         sp = { body: null, sprite: spr, chargeSprite: null, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'golem-idle', wasFiring: false };
-        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'boss-idle' };
 
       } else if (e.name === 'Goblin') {
         const spr = this.add.sprite(e.x, e.y, 'goblin-attack', 0).setDepth(8).setScale(0.95);
@@ -776,13 +777,11 @@ export class GameScene extends Phaser.Scene {
       // Destroy any active charge orb when the Golem dies.
       sp.chargeSprite?.destroy();
       sp.chargeSprite = null;
-      if (sp.sprite) {
-        // Animated enemy dies — pick the right death key based on the enemy name.
-        const deathKey = e.name === 'Golem' ? 'golem-death' : 'boss-death';
-        sp.animKey = deathKey;
-        sp.sprite.play(deathKey);
-        sp.label?.setAlpha(0);  // hide name label immediately on death
       sp.label?.setAlpha(0);
+      if (e.name === 'Golem' && sp.sprite) {
+        sp.animKey = 'golem-death';
+        sp.sprite.play('golem-death');
+      }
 
       if (e.name === 'Dark Mage' && sp.sprite) {
         sp.animKey = 'boss-death';
@@ -878,8 +877,6 @@ export class GameScene extends Phaser.Scene {
             sp.chargeSprite.destroy();
             sp.chargeSprite = null;
           }
-        const labelOffsetY = e.name === 'Dark Mage' ? 22 : 6;
-        sp.label?.setPosition(e.x, e.y - sp.sprite.displayHeight / 2 - labelOffsetY);
 
           // ── Laser beam fire visual ─────────────────────────────────────────────
           // Detect the first tick where isLaserFiring flips from false → true.
@@ -903,27 +900,26 @@ export class GameScene extends Phaser.Scene {
         if (mdx < -1)     sp.sprite.setFlipX(true);
         else if (mdx > 1) sp.sprite.setFlipX(false);
 
-        const locked = sp.animKey === hitKey || sp.animKey === deathKey || sp.animKey === attackKey;
-        // Don't switch anim while charging (handled above) or locked in a one-shot anim.
-        const charging = isGolem && e.chargePercent > 0;
-        if (e.health < sp.prevHp && !locked && !charging) {
-          // Play the hit-stagger animation when HP drops, then return to idle/run.
-          sp.animKey = hitKey;
-          sp.sprite.play(hitKey);
-          sp.sprite.once('animationcomplete', () => {
-            if (sp!.animKey === hitKey) {
-              const moving = Math.abs(e.x - sp!.prevX) > 1 || Math.abs(e.y - sp!.prevY) > 1;
-              sp!.animKey = moving ? runKey : idleKey;
-              sp!.sprite?.play(sp!.animKey);
-            }
-          });
-        } else if (!locked && !charging) {
-          const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
-          const want   = moving ? runKey : idleKey;
-          if (sp.animKey !== want) {
-            sp.animKey = want;
-            sp.sprite.play(want);
-        if (e.name === 'Dark Mage') {
+        if (isGolem) {
+          const charging = e.chargePercent > 0;
+          const locked = sp.animKey === hitKey || sp.animKey === deathKey || sp.animKey === attackKey;
+          if (e.health < sp.prevHp && !locked && !charging) {
+            sp.animKey = hitKey;
+            sp.sprite.play(hitKey);
+            sp.sprite.once('animationcomplete', () => {
+              if (sp!.animKey === hitKey) {
+                const moving = Math.abs(e.x - sp!.prevX) > 1 || Math.abs(e.y - sp!.prevY) > 1;
+                sp!.animKey = moving ? runKey : idleKey;
+                sp!.sprite?.play(sp!.animKey);
+              }
+            });
+          } else if (!locked && !charging) {
+            const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
+            const want   = moving ? runKey : idleKey;
+            if (sp.animKey !== want) { sp.animKey = want; sp.sprite.play(want); }
+          }
+
+        } else if (e.name === 'Dark Mage') {
           const locked = sp.animKey === 'boss-take-hit' || sp.animKey === 'boss-death' || sp.animKey === 'boss-attack';
           if (e.health < sp.prevHp && !locked) {
             sp.animKey = 'boss-take-hit';
