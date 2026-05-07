@@ -9,16 +9,12 @@ const HIT_RADIUS: Record<string, number> = { Archer: 16, Wizard: 28 };
 
 // Scale chosen so each class renders at roughly 70 px tall on the 960×640 viewport.
 const CLASS_SCALE: Record<string, number> = {
-  Warrior: 0.5,
-  Wizard:  0.4,
-  Archer:  0.7,
+  Warrior: 0.95,
+  Wizard:  0.6,
+  Archer:  1.0,
 };
 
-const ENEMY_COLOR: Record<string, number> = {
-  Skeleton: 0xbdc3c7,
-  Goblin:   0x2ecc71,
-  Spider:   0x6c3483,
-};
+const ENEMY_COLOR: Record<string, number> = {};
 
 // ── World decorations ──────────────────────────────────────────────────────
 // Torch positions in world-space (origin at (0, 0), world = REGION_W × REGION_H).
@@ -173,6 +169,22 @@ export class GameScene extends Phaser.Scene {
     this.load.spritesheet('boss-fall',     '/assets/Darkmage/Fall.png',     { frameWidth: 250, frameHeight: 250 });
     // Fireball — 128×160, 4 cols × 5 rows of 32×32; purple = row 1 (frames 4–7)
     this.load.spritesheet('boss-fireball', '/assets/Darkmage/Fireball.png', { frameWidth: 32, frameHeight: 32 });
+
+    // Goblin — 150×150 frames
+    this.load.spritesheet('goblin-attack', '/assets/Goblin/Attack3.png',     { frameWidth: 150, frameHeight: 150 });
+    this.load.spritesheet('goblin-bomb',   '/assets/Goblin/Bomb_sprite.png', { frameWidth: 100, frameHeight: 100 });
+
+    // Skeleton — 150×150 body frames, 92×102 sword projectile frames
+    this.load.spritesheet('skeleton-attack', '/assets/Skeleton/Attack3.png',     { frameWidth: 150, frameHeight: 150 });
+    this.load.spritesheet('skeleton-sword',  '/assets/Skeleton/Sword_sprite.png', { frameWidth: 92,  frameHeight: 102 });
+
+    // Bat — 87×87 frames
+    this.load.spritesheet('bat-fly',         '/assets/Bat/fly.png',         { frameWidth: 87, frameHeight: 87 });
+    this.load.spritesheet('bat-attack',      '/assets/Bat/attack.png',      { frameWidth: 87, frameHeight: 87 });
+    this.load.spritesheet('bat-hurt',        '/assets/Bat/hurt.png',        { frameWidth: 87, frameHeight: 87 });
+    this.load.spritesheet('bat-fly-to-fall', '/assets/Bat/fly-to-fall.png', { frameWidth: 87, frameHeight: 87 });
+    this.load.spritesheet('bat-fall',        '/assets/Bat/fall.png',        { frameWidth: 87, frameHeight: 87 });
+    this.load.spritesheet('bat-death',       '/assets/Bat/death.png',       { frameWidth: 87, frameHeight: 87 });
   }
 
   // ── Phaser lifecycle: create ───────────────────────────────────────────────
@@ -183,6 +195,9 @@ export class GameScene extends Phaser.Scene {
     this.createWizardAnims();
     this.createArcherAnims();
     this.createDarkMageAnims();
+    this.createGoblinAnims();
+    this.createSkeletonAnims();
+    this.createBatAnims();
 
     this.hpBars      = this.add.graphics().setDepth(20);
     this.aimGraphics = this.add.graphics().setDepth(6);
@@ -294,6 +309,28 @@ export class GameScene extends Phaser.Scene {
     a.create({ key: 'boss-fall',     frames: a.generateFrameNumbers('boss-fall',     { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
     // Purple fireball — row 1 of the shared sheet (frames 4–7)
     a.create({ key: 'boss-fireball', frames: a.generateFrameNumbers('boss-fireball', { start: 4, end: 7 }), frameRate: 10, repeat: -1 });
+  }
+
+  private createGoblinAnims() {
+    const a = this.anims;
+    a.create({ key: 'goblin-attack', frames: a.generateFrameNumbers('goblin-attack', { start: 0, end: 11 }), frameRate: 10, repeat: 0 });
+    a.create({ key: 'goblin-bomb',   frames: a.generateFrameNumbers('goblin-bomb',   { start: 0, end: 18 }), frameRate: 14, repeat: 0  });
+  }
+
+  private createSkeletonAnims() {
+    const a = this.anims;
+    a.create({ key: 'skeleton-attack', frames: a.generateFrameNumbers('skeleton-attack', { start: 0, end: 5 }), frameRate: 10, repeat: 0 });
+    a.create({ key: 'skeleton-sword',  frames: a.generateFrameNumbers('skeleton-sword',  { start: 0, end: 7 }), frameRate: 16, repeat: -1 });
+  }
+
+  private createBatAnims() {
+    const a = this.anims;
+    a.create({ key: 'bat-fly',         frames: a.generateFrameNumbers('bat-fly',         { start: 0, end: 10 }), frameRate: 10, repeat: -1 });
+    a.create({ key: 'bat-attack',      frames: a.generateFrameNumbers('bat-attack',      { start: 0, end: 10 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'bat-hurt',        frames: a.generateFrameNumbers('bat-hurt',        { start: 0, end: 2  }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'bat-fly-to-fall', frames: a.generateFrameNumbers('bat-fly-to-fall', { start: 0, end: 2  }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'bat-fall',        frames: a.generateFrameNumbers('bat-fall',        { start: 0, end: 4  }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'bat-death',       frames: a.generateFrameNumbers('bat-death',       { start: 0, end: 3  }), frameRate: 8,  repeat: 0  });
   }
 
   private initPlayerSprite(heroClass: string) {
@@ -432,7 +469,7 @@ export class GameScene extends Phaser.Scene {
       if (me) { this.localX = me.x; this.localY = me.y; }
     }
 
-    this.showSkeletonProjectiles(s);
+    this.showEnemyAttacks(s);
     this.state = s;
 
     if (this.myUserId) this.destroyOther(this.myUserId);
@@ -557,6 +594,7 @@ export class GameScene extends Phaser.Scene {
 
   private syncEnemy(e: EnemyState) {
     let sp = this.enemySprites.get(e.id);
+
     if (!sp) {
       if (e.name === 'Dark Mage') {
         const spr = this.add.sprite(e.x, e.y, 'boss-idle', 0).setDepth(8).setScale(0.96);
@@ -565,6 +603,29 @@ export class GameScene extends Phaser.Scene {
           fontFamily: 'Courier New', fontSize: '10px', color: '#ffffff',
         }).setOrigin(0.5, 1).setDepth(9);
         sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'boss-idle' };
+
+      } else if (e.name === 'Goblin') {
+        const spr = this.add.sprite(e.x, e.y, 'goblin-attack', 0).setDepth(8).setScale(0.95);
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Goblin', {
+          fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '' };
+
+      } else if (e.name === 'Skeleton') {
+        const spr = this.add.sprite(e.x, e.y, 'skeleton-attack', 0).setDepth(8).setScale(0.95);
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Skeleton', {
+          fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '' };
+
+      } else if (e.name === 'Bat') {
+        const spr = this.add.sprite(e.x, e.y, 'bat-fly', 0).setDepth(8).setScale(1.3);
+        spr.play('bat-fly');
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Bat', {
+          fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'bat-fly' };
+
       } else {
         const size  = 28;
         const col   = ENEMY_COLOR[e.name] ?? 0xff4444;
@@ -577,57 +638,97 @@ export class GameScene extends Phaser.Scene {
       this.enemySprites.set(e.id, sp);
     }
 
+    // ── Death ──
     if (!e.isAlive && !sp.dead) {
       sp.dead = true;
-      if (sp.sprite) {
+      sp.label?.setAlpha(0);
+
+      if (e.name === 'Dark Mage' && sp.sprite) {
         sp.animKey = 'boss-death';
         sp.sprite.play('boss-death');
-        sp.label?.setAlpha(0);
         sp.sprite.once('animationcomplete', () => {
-          this.tweens.add({
-            targets: sp!.sprite, alpha: 0, duration: 500,
-            onComplete: () => sp!.sprite?.setVisible(false),
+          this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 500, onComplete: () => sp!.sprite?.setVisible(false) });
+        });
+
+      } else if (e.name === 'Bat' && sp.sprite) {
+        sp.animKey = 'bat-fly-to-fall';
+        sp.sprite.play('bat-fly-to-fall');
+        sp.sprite.once('animationcomplete', () => {
+          sp!.animKey = 'bat-fall';
+          sp!.sprite?.play('bat-fall');
+          sp!.sprite?.once('animationcomplete', () => {
+            this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 300, onComplete: () => sp!.sprite?.setVisible(false) });
           });
         });
-      } else {
+
+      } else if (sp.sprite) {
+        // Goblin / Skeleton: fade out (no dedicated death animation provided)
+        this.tweens.add({
+          targets: sp.sprite, alpha: 0, duration: 400,
+          onComplete: () => sp!.sprite?.setVisible(false),
+        });
+
+      } else if (sp.body) {
         this.tweens.add({
           targets: [sp.body, sp.label],
           alpha: 0, angle: 90, duration: 350,
           onComplete: () => { sp!.body?.setVisible(false); sp!.label?.setVisible(false); },
         });
       }
+
+    // ── Alive: update position and animations ──
     } else if (e.isAlive) {
       if (sp.sprite) {
         sp.sprite.setPosition(e.x, e.y);
-        sp.label?.setPosition(e.x, e.y - sp.sprite.displayHeight / 2 - 22);
+        const labelOffsetY = e.name === 'Dark Mage' ? 22 : 6;
+        sp.label?.setPosition(e.x, e.y - sp.sprite.displayHeight / 2 - labelOffsetY);
 
         const mdx = e.x - sp.prevX;
         if (mdx < -1)     sp.sprite.setFlipX(true);
         else if (mdx > 1) sp.sprite.setFlipX(false);
 
-        const locked = sp.animKey === 'boss-take-hit' || sp.animKey === 'boss-death' || sp.animKey === 'boss-attack';
-        if (e.health < sp.prevHp && !locked) {
-          sp.animKey = 'boss-take-hit';
-          sp.sprite.play('boss-take-hit');
-          sp.sprite.once('animationcomplete', () => {
-            if (sp!.animKey === 'boss-take-hit') {
-              const moving = Math.abs(e.x - sp!.prevX) > 1 || Math.abs(e.y - sp!.prevY) > 1;
-              sp!.animKey = moving ? 'boss-run' : 'boss-idle';
-              sp!.sprite?.play(sp!.animKey);
-            }
-          });
-        } else if (!locked) {
-          const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
-          const want   = moving ? 'boss-run' : 'boss-idle';
-          if (sp.animKey !== want) {
-            sp.animKey = want;
-            sp.sprite.play(want);
+        if (e.name === 'Dark Mage') {
+          const locked = sp.animKey === 'boss-take-hit' || sp.animKey === 'boss-death' || sp.animKey === 'boss-attack';
+          if (e.health < sp.prevHp && !locked) {
+            sp.animKey = 'boss-take-hit';
+            sp.sprite.play('boss-take-hit');
+            sp.sprite.once('animationcomplete', () => {
+              if (sp!.animKey === 'boss-take-hit') {
+                const moving = Math.abs(e.x - sp!.prevX) > 1 || Math.abs(e.y - sp!.prevY) > 1;
+                sp!.animKey = moving ? 'boss-run' : 'boss-idle';
+                sp!.sprite?.play(sp!.animKey);
+              }
+            });
+          } else if (!locked) {
+            const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
+            const want   = moving ? 'boss-run' : 'boss-idle';
+            if (sp.animKey !== want) { sp.animKey = want; sp.sprite.play(want); }
+          }
+
+        } else if (e.name === 'Bat') {
+          const LOCKED_BAT = new Set(['bat-hurt', 'bat-attack', 'bat-fly-to-fall', 'bat-fall']);
+          if (e.health < sp.prevHp && !LOCKED_BAT.has(sp.animKey)) {
+            sp.animKey = 'bat-hurt';
+            sp.sprite.play('bat-hurt');
+            sp.sprite.once('animationcomplete', () => {
+              if (sp!.animKey === 'bat-hurt') { sp!.animKey = 'bat-fly'; sp!.sprite?.play('bat-fly'); }
+            });
+          }
+
+        } else {
+          // Goblin / Skeleton: flash on damage (no hurt animation available)
+          if (e.health < sp.prevHp) {
+            this.tweens.add({
+              targets: sp.sprite, alpha: 0.25, duration: 80, yoyo: true, repeat: 1,
+              onComplete: () => sp!.sprite?.setAlpha(1),
+            });
           }
         }
+
       } else {
+        // Fallback rectangle enemy
         sp.body!.setPosition(e.x, e.y);
         sp.label?.setPosition(e.x, e.y - (sp.body!.height / 2 + 6));
-
         if (e.health < sp.prevHp) {
           this.tweens.add({
             targets: sp.body, alpha: 0.2, duration: 80, yoyo: true, repeat: 1,
@@ -636,6 +737,7 @@ export class GameScene extends Phaser.Scene {
         }
       }
     }
+
     sp.prevX  = e.x;
     sp.prevY  = e.y;
     sp.prevHp = e.health;
@@ -1043,11 +1145,16 @@ export class GameScene extends Phaser.Scene {
     this.projectileSprites.clear();
   }
 
-  // ── Skeleton projectile visuals ────────────────────────────────────────────
+  // ── Enemy attack visuals ───────────────────────────────────────────────────
+  // Fired when a player's HP decreases: shows a per-enemy attack animation.
+  // Skeleton: animated sword sprite flies to the target.
+  // Goblin:   bomb animation plays at the goblin's position (melee burst).
+  // Bat:      triggers the bat's attack animation on its sprite.
 
-  private showSkeletonProjectiles(s: GameState) {
+  private showEnemyAttacks(s: GameState) {
     const skeletons = s.currentRoom.enemies.filter(e => e.name === 'Skeleton' && e.isAlive);
-    if (!skeletons.length) return;
+    const goblins   = s.currentRoom.enemies.filter(e => e.name === 'Goblin'   && e.isAlive);
+    const bats      = s.currentRoom.enemies.filter(e => e.name === 'Bat'      && e.isAlive);
 
     for (const player of s.players) {
       const prevHp = this.prevPlayerHp.get(player.userId) ?? player.currentHp;
@@ -1061,12 +1168,57 @@ export class GameScene extends Phaser.Scene {
         ? this.localY
         : (this.others.get(player.userId)?.sprite.y ?? player.y);
 
+      // Skeleton: play attack anim on the skeleton's sprite, then launch a spinning sword projectile.
       for (const sk of skeletons) {
         const sdx = targetX - sk.x;
         const sdy = targetY - sk.y;
         if (sdx * sdx + sdy * sdy > 260 * 260) continue;
-        const proj = this.add.arc(sk.x, sk.y, 5, 0, 360, false, 0xbdc3c7, 0.9).setDepth(15);
-        this.tweens.add({ targets: proj, x: targetX, y: targetY, duration: 280, onComplete: () => proj.destroy() });
+        const skSp = this.enemySprites.get(sk.id);
+        if (skSp?.sprite && !skSp.dead && skSp.animKey !== 'skeleton-attack') {
+          skSp.animKey = 'skeleton-attack';
+          skSp.sprite.play('skeleton-attack');
+          skSp.sprite.once('animationcomplete', () => {
+            if (skSp.animKey === 'skeleton-attack') { skSp.animKey = ''; skSp.sprite?.setFrame(0); }
+          });
+        }
+        const sword = this.add.sprite(sk.x, sk.y, 'skeleton-sword', 0).setDepth(15).setScale(0.7);
+        sword.play('skeleton-sword');
+        this.tweens.add({ targets: sword, x: targetX, y: targetY, duration: 280, onComplete: () => sword.destroy() });
+      }
+
+      // Goblin: play attack anim on the goblin's sprite, then show a bomb burst at its position.
+      for (const gb of goblins) {
+        const gdx = targetX - gb.x;
+        const gdy = targetY - gb.y;
+        if (gdx * gdx + gdy * gdy > 130 * 130) continue;
+        const gbSp = this.enemySprites.get(gb.id);
+        if (gbSp?.sprite && !gbSp.dead && gbSp.animKey !== 'goblin-attack') {
+          gbSp.animKey = 'goblin-attack';
+          gbSp.sprite.play('goblin-attack');
+          gbSp.sprite.once('animationcomplete', () => {
+            if (gbSp.animKey === 'goblin-attack') { gbSp.animKey = ''; gbSp.sprite?.setFrame(0); }
+          });
+        }
+        const bomb = this.add.sprite(gb.x, gb.y, 'goblin-bomb', 0).setDepth(15).setScale(0.55);
+        bomb.play('goblin-bomb');
+        bomb.once('animationcomplete', () => bomb.destroy());
+      }
+
+      // Bat: trigger the bat-attack animation on the bat's own sprite.
+      for (const bt of bats) {
+        const bdx = targetX - bt.x;
+        const bdy = targetY - bt.y;
+        if (bdx * bdx + bdy * bdy > 130 * 130) continue;
+        const batSp = this.enemySprites.get(bt.id);
+        if (!batSp?.sprite || batSp.dead) continue;
+        const LOCKED_BAT = new Set(['bat-attack', 'bat-fly-to-fall', 'bat-fall']);
+        if (!LOCKED_BAT.has(batSp.animKey)) {
+          batSp.animKey = 'bat-attack';
+          batSp.sprite.play('bat-attack');
+          batSp.sprite.once('animationcomplete', () => {
+            if (batSp.animKey === 'bat-attack') { batSp.animKey = 'bat-fly'; batSp.sprite?.play('bat-fly'); }
+          });
+        }
       }
     }
   }
