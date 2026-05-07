@@ -11,7 +11,8 @@
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Gragas\\\\source\\\\repos\\\\Grupparbete\\\\Heroes Descent\" -Recurse)",
       "Bash(Select-Object -First 100)",
       "Bash(Format-Table FullName)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(Select-Object -Property FullName)"
     ]
   }
 }

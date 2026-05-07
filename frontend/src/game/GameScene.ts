@@ -1,16 +1,13 @@
 import Phaser from 'phaser';
 import type { GameState, EnemyState, PlayerState, ActiveProjectile } from '../types/gameTypes';
 import type { GameEngine } from './gameEngine';
-
-// Room bounds — pixel coordinates that must match RoomBounds.cs on the server.
-const R = { L: 48, R: 912, T: 48, B: 592, W: 864, H: 544, CX: 480, CY: 320 };
+import { REGION_W, REGION_H } from './MapRegionManager';
 
 const ATTACK_RANGE = 120;
 const CLASS_RANGE: Record<string, number> = { Warrior: 120, Archer: 600, Wizard: 800 };
 const HIT_RADIUS: Record<string, number> = { Archer: 16, Wizard: 28 };
-const TILE = 64;
 
-// Scale chosen so each class renders at roughly 70 px tall on the 960×640 canvas.
+// Scale chosen so each class renders at roughly 70 px tall on the 960×640 viewport.
 const CLASS_SCALE: Record<string, number> = {
   Warrior: 0.5,
   Wizard:  0.4,
@@ -22,126 +19,24 @@ const ENEMY_COLOR: Record<string, number> = {
   Goblin:   0x2ecc71,
   Spider:   0x6c3483,
 };
-const BOSS_NAMES = new Set(['Dark Mage']);
 
-// ── Room image definitions ──────────────────────────────────────────────────
-// crop    — pixel region to extract from dungeon_map.png (1920×1080)
-// hazards — game-coordinate (960×640) rectangles the player cannot enter
-// torches — game-coordinate positions for animated flickering glow overlays
-// name    — text shown in the room-transition banner
-//
-// Hazard coordinates are pre-computed from the image crop and scaled to the
-// 960×640 canvas:  gameX = (imageX - crop.x) * (960 / crop.w)
-//                  gameY = (imageY - crop.y) * (640 / crop.h)
+// ── World decorations ──────────────────────────────────────────────────────
+// Torch positions in world-space (origin at (0, 0), world = REGION_W × REGION_H).
+// These are placed on top of whatever map region is currently rendered.
 
 interface HazardZone { x1: number; y1: number; x2: number; y2: number; }
-interface RoomDef {
-  crop:    { x: number; y: number; w: number; h: number };
-  hazards: HazardZone[];
-  torches: { x: number; y: number }[];
-  name:    string;
-}
 
-const ROOM_DEFS: Record<string, RoomDef> = {
-  // Crops reference the 1672×941 dungeon_map.png:
-  //   Col seams at x≈412, 831, 1253  |  Row seams at y≈409, 713
-  entrance: {
-    crop:    { x: 0,    y: 0,   w: 413, h: 410 },
-    hazards: [],
-    torches: [
-      { x: 64, y: 64 }, { x: 896, y: 64 }, { x: 64, y: 576 }, { x: 896, y: 576 },
-      { x: 64, y: 320 }, { x: 896, y: 320 },
-    ],
-    name: 'Entrance Hall',
-  },
-  lava: {
-    crop:    { x: 413,  y: 0,   w: 419, h: 410 },
-    hazards: [],
-    torches: [
-      { x: 64, y: 64 }, { x: 480, y: 64 }, { x: 896, y: 64 },
-      { x: 64, y: 576 }, { x: 480, y: 576 }, { x: 896, y: 576 },
-    ],
-    name: 'Lava Cavern',
-  },
-  water: {
-    crop:    { x: 832,  y: 0,   w: 422, h: 410 },
-    hazards: [],
-    torches: [
-      { x: 64, y: 64 }, { x: 896, y: 64 }, { x: 64, y: 576 }, { x: 896, y: 576 },
-      { x: 64, y: 320 }, { x: 896, y: 320 },
-    ],
-    name: 'Water Canal',
-  },
-  archive: {
-    crop:    { x: 413,  y: 410, w: 419, h: 304 },
-    hazards: [],
-    torches: [
-      { x: 64, y: 64 }, { x: 480, y: 64 }, { x: 896, y: 64 },
-      { x: 64, y: 576 }, { x: 896, y: 576 },
-    ],
-    name: 'Ancient Archive',
-  },
-  garden: {
-    crop:    { x: 1254, y: 0,   w: 418, h: 410 },
-    hazards: [],
-    torches: [
-      { x: 64, y: 64 }, { x: 896, y: 64 }, { x: 64, y: 576 }, { x: 896, y: 576 },
-    ],
-    name: 'Overgrown Garden',
-  },
-  machines: {
-    crop:    { x: 0,    y: 410, w: 413, h: 304 },
-    hazards: [],
-    torches: [
-      { x: 64, y: 64 }, { x: 480, y: 64 }, { x: 896, y: 64 },
-      { x: 64, y: 576 }, { x: 480, y: 576 }, { x: 896, y: 576 },
-    ],
-    name: 'Machine Workshop',
-  },
-  armory: {
-    crop:    { x: 832,  y: 410, w: 422, h: 304 },
-    hazards: [],
-    torches: [
-      { x: 64, y: 64 }, { x: 896, y: 64 }, { x: 64, y: 576 }, { x: 896, y: 576 },
-    ],
-    name: 'Armory',
-  },
-  boss: {
-    crop:    { x: 0,    y: 714, w: 413, h: 227 },
-    hazards: [],
-    torches: [
-      { x: 64, y: 64 }, { x: 480, y: 64 }, { x: 896, y: 64 },
-      { x: 64, y: 320 }, { x: 896, y: 320 },
-      { x: 64, y: 576 }, { x: 480, y: 576 }, { x: 896, y: 576 },
-    ],
-    name: 'Boss Sanctum',
-  },
-  vault: {
-    crop:    { x: 413,  y: 714, w: 419, h: 227 },
-    hazards: [],
-    torches: [
-      { x: 64, y: 64 }, { x: 896, y: 64 }, { x: 64, y: 576 }, { x: 896, y: 576 },
-    ],
-    name: 'Treasure Vault',
-  },
-  exit: {
-    crop:    { x: 1254, y: 714, w: 418, h: 227 },
-    hazards: [],
-    torches: [
-      { x: 64, y: 64 }, { x: 896, y: 64 }, { x: 64, y: 576 }, { x: 896, y: 576 },
-    ],
-    name: 'Exit Hall',
-  },
-};
+const WORLD_TORCHES: { x: number; y: number }[] = [
+  { x: 100,  y: 80  }, { x: 640,  y: 80  }, { x: 1180, y: 80  },
+  { x: 100,  y: 450 }, { x: 1180, y: 450 },
+  { x: 100,  y: 820 }, { x: 640,  y: 820 }, { x: 1180, y: 820 },
+];
 
-// Normal/Elite rooms cycle through these 8 keys in order by roomIndex.
-// TreasureChest rooms always show the vault. Boss rooms always show the sanctum.
-const NORMAL_KEYS = ['entrance', 'lava', 'water', 'archive', 'garden', 'machines', 'armory', 'exit'];
-
-function roomDefKey(roomIndex: number, roomType?: string): string {
-  if (roomType === 'Boss')          return 'boss';
-  if (roomType === 'TreasureChest') return 'vault';
-  return NORMAL_KEYS[roomIndex % NORMAL_KEYS.length];
+function roomDisplayName(roomType?: string, roomIndex = 0): string {
+  if (roomType === 'Boss')          return 'Boss Sanctum';
+  if (roomType === 'TreasureChest') return 'Treasure Vault';
+  if (roomType === 'Elite')         return 'Elite Chamber';
+  return `Chamber ${roomIndex + 1}`;
 }
 
 // ── Sprite interfaces ───────────────────────────────────────────────────────
@@ -182,10 +77,13 @@ export class GameScene extends Phaser.Scene {
   private myUsername = '';
 
   private state:         GameState | null = null;
-  private lastRoomIndex = -1;
+  private lastRoomIndex     = -1;
+  private regularRoomCount  = 0;
 
-  private localX = R.CX;
-  private localY = R.CY;
+  private localX = REGION_W / 2;
+  private localY = REGION_H / 2;
+  private levelWidth  = REGION_W;
+  private levelHeight = REGION_H;
   private readonly SPEED = 220;
   private lastPosSent   = 0;
 
@@ -222,9 +120,19 @@ export class GameScene extends Phaser.Scene {
   // ── Phaser lifecycle: preload ──────────────────────────────────────────────
 
   preload() {
-    // Dungeon background map — used by drawRoom() to show each room as a
-    // cropped region of the full 1920×1080 image scaled to the 960×640 canvas.
-    this.load.image('dungeon-map', '/assets/dungeon_map.png');
+    // Background images — one per room environment, displayed at native resolution.
+    this.load.image('bg-entrance-hall',           '/assets/BackgroundAssets/EntranceHall.png');
+    this.load.image('bg-green-garden',            '/assets/BackgroundAssets/GreenGarden.png');
+    this.load.image('bg-water-canal',             '/assets/BackgroundAssets/WaterCanal.png');
+    this.load.image('bg-lava-maze',               '/assets/BackgroundAssets/LavaMaze.png');
+    this.load.image('bg-library',                 '/assets/BackgroundAssets/Library.png');
+    this.load.image('bg-crystal-cave',            '/assets/BackgroundAssets/CrystalCave.png');
+    this.load.image('bg-armory',                  '/assets/BackgroundAssets/Armory.png');
+    this.load.image('bg-throne-room',             '/assets/BackgroundAssets/ThroneRoom.png');
+    this.load.image('bg-treasury',                '/assets/BackgroundAssets/Treasury.png');
+    this.load.image('bg-demonic-summoning-room',  '/assets/BackgroundAssets/DemonicSummoningRoom.png');
+    this.load.image('bg-boss-room',               '/assets/BackgroundAssets/BossRoom.png');
+    this.load.image('bg-exit-hall',               '/assets/BackgroundAssets/ExitHall.png');
 
     // Warrior — 140×140 frames
     this.load.spritesheet('warrior-idle',     '/assets/Warrior/Idle.png',     { frameWidth: 140, frameHeight: 140 });
@@ -270,14 +178,7 @@ export class GameScene extends Phaser.Scene {
   // ── Phaser lifecycle: create ───────────────────────────────────────────────
 
   create() {
-    // Register a named texture frame for every room crop so drawRoom() can
-    // reference them by key without re-slicing the texture each call.
-    const tex = this.textures.get('dungeon-map');
-    for (const [key, def] of Object.entries(ROOM_DEFS)) {
-      tex.add(key, 0, def.crop.x, def.crop.y, def.crop.w, def.crop.h);
-    }
-
-    this.drawRoom(0);
+    this.renderBackground('bg-entrance-hall');
     this.createWarriorAnims();
     this.createWizardAnims();
     this.createArcherAnims();
@@ -287,14 +188,17 @@ export class GameScene extends Phaser.Scene {
     this.aimGraphics = this.add.graphics().setDepth(6);
 
     // Placeholder sprite — invisible until class is known so no wrong-class flash.
-    this.mySprite = this.add.sprite(R.CX, R.CY, 'warrior-idle', 0)
+    this.mySprite = this.add.sprite(REGION_W / 2, REGION_H / 2, 'warrior-idle', 0)
       .setDepth(10)
       .setScale(0.5)
       .setAlpha(0);
 
-    this.myLabel = this.add.text(R.CX, R.CY - 45, '', {
+    this.myLabel = this.add.text(REGION_W / 2, REGION_H / 2 - 45, '', {
       fontFamily: 'Courier New', fontSize: '10px', color: '#ffffff',
     }).setOrigin(0.5, 1).setDepth(11);
+
+    this.cameras.main.startFollow(this.mySprite);
+    this.cameras.main.setBounds(0, 0, this.levelWidth, this.levelHeight);
 
     const kb = this.input.keyboard!;
     // W / A / S / D — move the player up, left, down, right
@@ -433,8 +337,9 @@ export class GameScene extends Phaser.Scene {
     // Multiplying by 0.707 (1/√2) keeps diagonal speed equal to cardinal speed.
     if (dx && dy) { dx *= 0.707; dy *= 0.707; }
 
-    const newX = Phaser.Math.Clamp(this.localX + dx, R.L + 16, R.R - 16);
-    const newY = Phaser.Math.Clamp(this.localY + dy, R.T + 16, R.B - 16);
+    const pad  = 32;
+    const newX = Phaser.Math.Clamp(this.localX + dx, pad, this.levelWidth  - pad);
+    const newY = Phaser.Math.Clamp(this.localY + dy, pad, this.levelHeight - pad);
 
     // Hazard collision — try full move, then axis-only fallbacks.
     if (!this.inHazard(newX, newY)) {
@@ -520,7 +425,7 @@ export class GameScene extends Phaser.Scene {
       this.clearEnemies();
       this.clearProjectiles();  // discard any fireballs still in flight from the previous room
       this.clearRoomVisuals();
-      this.drawRoom(s.currentRoomIndex, s.currentRoom.type);
+      this.renderBackground(this.backgroundKeyForRoom(s.currentRoomIndex, s.currentRoom.type));
       this.showRoomBanner(s.currentRoomIndex, s.currentRoom.type);
       this.prevPlayerHp.clear();
       const me = s.players.find(p => p.userId === this.myUserId);
@@ -782,37 +687,40 @@ export class GameScene extends Phaser.Scene {
 
   // ── Room drawing ───────────────────────────────────────────────────────────
 
-  private drawRoom(roomIndex = 0, roomType?: string) {
-    const key = roomDefKey(roomIndex, roomType);
-    const def = ROOM_DEFS[key];
+  // Returns the Phaser texture key for the background that matches the given room.
+  // Room 0 is always the entrance; Boss and TreasureChest rooms have dedicated art;
+  // all other rooms cycle through the remaining themed environments in order.
+  private backgroundKeyForRoom(roomIndex: number, roomType: string): string {
+    if (roomIndex === 0) {
+      this.regularRoomCount = 0;
+      return 'bg-entrance-hall';
+    }
+    if (roomType === 'Boss')          return 'bg-boss-room';
+    if (roomType === 'TreasureChest') return 'bg-treasury';
+    const pool = [
+      'bg-green-garden', 'bg-water-canal', 'bg-lava-maze',
+      'bg-library', 'bg-crystal-cave', 'bg-armory',
+      'bg-throne-room', 'bg-demonic-summoning-room', 'bg-exit-hall',
+    ];
+    const key = pool[this.regularRoomCount % pool.length];
+    this.regularRoomCount++;
+    return key;
+  }
 
-    // ── 1. Background: cropped region of dungeon_map.png scaled to fill canvas ──
-    // The texture frame 'key' was registered in create() and points to the
-    // exact pixel region for this room inside the 1920×1080 source image.
-    const bg = this.add.image(0, 0, 'dungeon-map', key)
+  private renderBackground(bgKey: string) {
+    this.levelWidth  = REGION_W;
+    this.levelHeight = REGION_H;
+
+    // Place background at world origin at native resolution (no scaling).
+    const bg = this.add.image(0, 0, bgKey)
       .setOrigin(0, 0)
-      .setDisplaySize(960, 640)
       .setDepth(0);
     this.roomDecorations.push(bg);
 
-    // ── 2. Wall border overlay — dark edges matching the server's 48 px wall bounds ──
-    // Drawn on top of the background so the playable area boundary is visually clear.
-    const walls = this.add.graphics().setDepth(1);
-    walls.fillStyle(0x0a0806, 0.88);
-    walls.fillRect(0, 0, 960, R.T);           // top
-    walls.fillRect(0, R.B, 960, 640 - R.B);   // bottom
-    walls.fillRect(0, R.T, R.L, R.H);         // left
-    walls.fillRect(R.R, R.T, 960 - R.R, R.H); // right
-    // Gold inner border line
-    walls.lineStyle(2, 0xc9a84c, 0.55);
-    walls.strokeRect(R.L, R.T, R.W, R.H);
-    this.roomDecorations.push(walls);
+    for (const t of WORLD_TORCHES) this.placeTorch(t.x, t.y);
 
-    // ── 3. Animated torch glows on top of the image ──────────────────────────
-    for (const pos of def.torches) this.placeTorch(pos.x, pos.y);
-
-    // ── 4. Activate hazard zones for this room ───────────────────────────────
-    this.currentHazards = def.hazards;
+    this.cameras.main.setBounds(0, 0, REGION_W, REGION_H);
+    this.currentHazards = [];
   }
 
   private placeTorch(x: number, y: number) {
@@ -839,8 +747,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private showRoomBanner(roomIndex: number, roomType?: string) {
-    const key  = roomDefKey(roomIndex, roomType);
-    const name = ROOM_DEFS[key].name;
+    const name = roomDisplayName(roomType, roomIndex);
     const sub  = roomType === 'Boss'          ? '— Boss Encounter —'
                : roomType === 'Elite'         ? '— Elite —'
                : roomType === 'TreasureChest' ? '— Treasure —'
@@ -849,7 +756,7 @@ export class GameScene extends Phaser.Scene {
     const panelW = 340, panelH = 72;
     const panelX = (960 - panelW) / 2, panelY = 176;
 
-    const bg = this.add.graphics().setDepth(50).setAlpha(0);
+    const bg = this.add.graphics().setDepth(50).setAlpha(0).setScrollFactor(0);
     bg.fillStyle(0x000000, 0.75);
     bg.fillRect(panelX, panelY, panelW, panelH);
     bg.lineStyle(1, 0xc9a84c, 0.8);
@@ -857,11 +764,11 @@ export class GameScene extends Phaser.Scene {
 
     const titleObj = this.add.text(480, panelY + 18, name, {
       fontFamily: 'Courier New', fontSize: '18px', color: '#c9a84c',
-    }).setOrigin(0.5, 0).setDepth(51).setAlpha(0);
+    }).setOrigin(0.5, 0).setDepth(51).setAlpha(0).setScrollFactor(0);
 
     const subObj = this.add.text(480, panelY + 44, sub, {
       fontFamily: 'Courier New', fontSize: '11px', color: '#aaaaaa',
-    }).setOrigin(0.5, 0).setDepth(51).setAlpha(0);
+    }).setOrigin(0.5, 0).setDepth(51).setAlpha(0).setScrollFactor(0);
 
     const targets = [bg, titleObj, subObj];
     this.tweens.add({

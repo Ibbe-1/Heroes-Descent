@@ -1,23 +1,22 @@
 namespace Heroes_Descent.Core.GameState;
 
-// RoomBounds defines the physical layout of every dungeon room in pixel coordinates.
-// These values are shared across the server (enemy movement, attack range checks)
-// and must exactly match the constants used in the Phaser scene on the frontend
-// so that positions mean the same thing on both sides of the connection.
+// RoomBounds defines the world-space playable area shared by server and frontend.
 //
-// The game canvas is 960 × 640 px.
-// Walls are 48 px thick on every side, leaving an 864 × 544 playable area.
+// Viewport  : 960 × 640 px (Phaser canvas).
+// World size : REGION_W × REGION_H = 1280 × 900 px (MapRegionManager window, 1:1 scale).
+// Camera scrolls: 320 px horizontal, 260 px vertical per room.
+// All 12 sliding-window regions share these bounds — enemies stay inside every window.
 public static class RoomBounds
 {
-    // Inner room edges — enemies and players are clamped inside these
-    public const float Left   = 48f;
-    public const float Right  = 912f;
-    public const float Top    = 48f;
-    public const float Bottom = 592f;
+    // Playable edges — 32 px inset from the 1280 × 900 region window.
+    public const float Left   = 32f;
+    public const float Right  = 1248f;
+    public const float Top    = 32f;
+    public const float Bottom = 868f;
 
-    // Center of the room — used as the player spawn reference point
-    public const float CenterX = (Left + Right) / 2f;    // 480
-    public const float CenterY = (Top + Bottom) / 2f;    // 320
+    // Center of the playable area — player and enemy spawn reference.
+    public const float CenterX = (Left + Right) / 2f;    // 640
+    public const float CenterY = (Top + Bottom) / 2f;    // 450
 
     // Warrior melee cone range
     public const float PlayerAttackRange    = 120f;  // kept for AttackNearest compat
@@ -55,9 +54,9 @@ public static class RoomBounds
     // The server resets players to these positions on every room transition.
     public static readonly (float x, float y)[] PlayerSpawns =
     [
-        (480f, 320f),
-        (430f, 320f),
-        (530f, 320f),
-        (480f, 370f),
+        (640f,  450f),
+        (580f,  450f),
+        (700f,  450f),
+        (640f,  510f),
     ];
 }
