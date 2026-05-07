@@ -57,6 +57,15 @@ public class DungeonGenerator
     private static RoomState MakeChestRoom(int index)
     {
         int gold = Random.Shared.Next(15, 31);
+
+        // 35% chance the chest is a Mimic in disguise.
+        // Players must defeat it before they can advance, but the gold is still awarded on entry.
+        if (Random.Shared.Next(100) < 35)
+        {
+            var (mx, my) = RandomEnemyPosition();
+            return new RoomState(index, RoomType.TreasureChest, [new EnemyInstance(new Mimic(), mx, my)], gold);
+        }
+
         return new RoomState(index, RoomType.TreasureChest, [], gold);
     }
 
@@ -70,12 +79,14 @@ public class DungeonGenerator
     // Creates one random enemy, applies floor scaling, and places it at a random position.
     private static EnemyInstance SpawnEnemy(int floor)
     {
-        // Pick one of the three basic enemy types at random.
-        Enemy e = Random.Shared.Next(3) switch
+        // Pick one of the five basic enemy types at random.
+        Enemy e = Random.Shared.Next(5) switch
         {
             0 => new Skeleton(),
             1 => new Goblin(),
-            _ => new Spider(),
+            2 => new Bat(),
+            3 => new Slime(),
+            _ => new Mushroom(),
         };
 
         // Floor scaling: each floor above 1 boosts HP, attack, and defence slightly.
