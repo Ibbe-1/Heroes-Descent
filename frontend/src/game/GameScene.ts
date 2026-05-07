@@ -185,6 +185,29 @@ export class GameScene extends Phaser.Scene {
     this.load.spritesheet('bat-fly-to-fall', '/assets/Bat/fly-to-fall.png', { frameWidth: 87, frameHeight: 87 });
     this.load.spritesheet('bat-fall',        '/assets/Bat/fall.png',        { frameWidth: 87, frameHeight: 87 });
     this.load.spritesheet('bat-death',       '/assets/Bat/death.png',       { frameWidth: 87, frameHeight: 87 });
+
+    // Slime — 156×156 frames
+    this.load.spritesheet('slime-idle',   '/assets/Slime/idle.png',   { frameWidth: 156, frameHeight: 156 });
+    this.load.spritesheet('slime-walk',   '/assets/Slime/walk.png',   { frameWidth: 156, frameHeight: 156 });
+    this.load.spritesheet('slime-attack', '/assets/Slime/attack.png', { frameWidth: 156, frameHeight: 156 });
+    this.load.spritesheet('slime-hurt',   '/assets/Slime/hurt.png',   { frameWidth: 156, frameHeight: 156 });
+    this.load.spritesheet('slime-death',  '/assets/Slime/death.png',  { frameWidth: 156, frameHeight: 156 });
+
+    // Mushroom — 150×150 body frames, 50×50 projectile frames
+    this.load.spritesheet('mushroom-attack',     '/assets/Mushroom/Attack3.png',          { frameWidth: 150, frameHeight: 150 });
+    this.load.spritesheet('mushroom-projectile', '/assets/Mushroom/Projectile_sprite.png', { frameWidth: 50,  frameHeight: 50  });
+
+    // Mimic — 146×146 frames
+    this.load.spritesheet('mimic-idle-closed',    '/assets/Mimic/Idle_closed.png',      { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-opening',         '/assets/Mimic/opening.png',          { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-idle-open',       '/assets/Mimic/idle_open.png',        { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-transform',       '/assets/Mimic/transform.png',        { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-idle-transformed','/assets/Mimic/idle_transformed.png', { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-walk',            '/assets/Mimic/walk.png',             { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-attack-1',        '/assets/Mimic/attack_1.png',         { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-attack-2',        '/assets/Mimic/attack_2.png',         { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-hurt',            '/assets/Mimic/hurt.png',             { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-death',           '/assets/Mimic/death.png',            { frameWidth: 146, frameHeight: 146 });
   }
 
   // ── Phaser lifecycle: create ───────────────────────────────────────────────
@@ -198,6 +221,9 @@ export class GameScene extends Phaser.Scene {
     this.createGoblinAnims();
     this.createSkeletonAnims();
     this.createBatAnims();
+    this.createSlimeAnims();
+    this.createMushroomAnims();
+    this.createMimicAnims();
 
     this.hpBars      = this.add.graphics().setDepth(20);
     this.aimGraphics = this.add.graphics().setDepth(6);
@@ -331,6 +357,35 @@ export class GameScene extends Phaser.Scene {
     a.create({ key: 'bat-fly-to-fall', frames: a.generateFrameNumbers('bat-fly-to-fall', { start: 0, end: 2  }), frameRate: 8,  repeat: 0  });
     a.create({ key: 'bat-fall',        frames: a.generateFrameNumbers('bat-fall',        { start: 0, end: 4  }), frameRate: 8,  repeat: 0  });
     a.create({ key: 'bat-death',       frames: a.generateFrameNumbers('bat-death',       { start: 0, end: 3  }), frameRate: 8,  repeat: 0  });
+  }
+
+  private createSlimeAnims() {
+    const a = this.anims;
+    a.create({ key: 'slime-idle',   frames: a.generateFrameNumbers('slime-idle',   { start: 0, end: 13 }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'slime-walk',   frames: a.generateFrameNumbers('slime-walk',   { start: 0, end: 5  }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'slime-attack', frames: a.generateFrameNumbers('slime-attack', { start: 0, end: 18 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'slime-hurt',   frames: a.generateFrameNumbers('slime-hurt',   { start: 0, end: 2  }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'slime-death',  frames: a.generateFrameNumbers('slime-death',  { start: 0, end: 10 }), frameRate: 8,  repeat: 0  });
+  }
+
+  private createMushroomAnims() {
+    const a = this.anims;
+    a.create({ key: 'mushroom-attack',     frames: a.generateFrameNumbers('mushroom-attack',     { start: 0, end: 10 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'mushroom-projectile', frames: a.generateFrameNumbers('mushroom-projectile', { start: 0, end: 7  }), frameRate: 12, repeat: -1 });
+  }
+
+  private createMimicAnims() {
+    const a = this.anims;
+    a.create({ key: 'mimic-idle-closed',     frames: a.generateFrameNumbers('mimic-idle-closed',     { start: 0, end: 0  }), frameRate: 1,  repeat: -1 });
+    a.create({ key: 'mimic-opening',          frames: a.generateFrameNumbers('mimic-opening',          { start: 0, end: 5  }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'mimic-idle-open',        frames: a.generateFrameNumbers('mimic-idle-open',        { start: 0, end: 0  }), frameRate: 1,  repeat: -1 });
+    a.create({ key: 'mimic-transform',        frames: a.generateFrameNumbers('mimic-transform',        { start: 0, end: 6  }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'mimic-idle-transformed', frames: a.generateFrameNumbers('mimic-idle-transformed', { start: 0, end: 8  }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'mimic-walk',             frames: a.generateFrameNumbers('mimic-walk',             { start: 0, end: 5  }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'mimic-attack-1',         frames: a.generateFrameNumbers('mimic-attack-1',         { start: 0, end: 13 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'mimic-attack-2',         frames: a.generateFrameNumbers('mimic-attack-2',         { start: 0, end: 12 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'mimic-hurt',             frames: a.generateFrameNumbers('mimic-hurt',             { start: 0, end: 2  }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'mimic-death',            frames: a.generateFrameNumbers('mimic-death',            { start: 0, end: 5  }), frameRate: 8,  repeat: 0  });
   }
 
   private initPlayerSprite(heroClass: string) {
@@ -596,6 +651,7 @@ export class GameScene extends Phaser.Scene {
     let sp = this.enemySprites.get(e.id);
 
     if (!sp) {
+      let isNewMimic = false;
       if (e.name === 'Dark Mage') {
         const spr = this.add.sprite(e.x, e.y, 'boss-idle', 0).setDepth(8).setScale(0.96);
         spr.play('boss-idle');
@@ -626,6 +682,30 @@ export class GameScene extends Phaser.Scene {
         }).setOrigin(0.5, 1).setDepth(9);
         sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'bat-fly' };
 
+      } else if (e.name === 'Slime') {
+        const spr = this.add.sprite(e.x, e.y, 'slime-idle', 0).setDepth(8).setScale(1.1);
+        spr.play('slime-idle');
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Slime', {
+          fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'slime-idle' };
+
+      } else if (e.name === 'Mushroom') {
+        const spr = this.add.sprite(e.x, e.y, 'mushroom-attack', 0).setDepth(8).setScale(1.0);
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Mushroom', {
+          fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '' };
+
+      } else if (e.name === 'Mimic') {
+        const spr = this.add.sprite(e.x, e.y, 'mimic-idle-closed', 0).setDepth(8).setScale(1.1);
+        spr.play('mimic-idle-closed');
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, '???', {
+          fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'mimic-idle-closed' };
+        isNewMimic = true;
+
       } else {
         const size  = 28;
         const col   = ENEMY_COLOR[e.name] ?? 0xff4444;
@@ -636,6 +716,7 @@ export class GameScene extends Phaser.Scene {
         sp = { body, sprite: null, label, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '' };
       }
       this.enemySprites.set(e.id, sp);
+      if (isNewMimic) this.startMimicReveal(sp!);
     }
 
     // ── Death ──
@@ -661,8 +742,22 @@ export class GameScene extends Phaser.Scene {
           });
         });
 
+      } else if (e.name === 'Slime' && sp.sprite) {
+        sp.animKey = 'slime-death';
+        sp.sprite.play('slime-death');
+        sp.sprite.once('animationcomplete', () => {
+          this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 300, onComplete: () => sp!.sprite?.setVisible(false) });
+        });
+
+      } else if (e.name === 'Mimic' && sp.sprite) {
+        sp.animKey = 'mimic-death';
+        sp.sprite.play('mimic-death');
+        sp.sprite.once('animationcomplete', () => {
+          this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 300, onComplete: () => sp!.sprite?.setVisible(false) });
+        });
+
       } else if (sp.sprite) {
-        // Goblin / Skeleton: fade out (no dedicated death animation provided)
+        // Goblin / Skeleton / Mushroom: fade out (no dedicated death animation provided)
         this.tweens.add({
           targets: sp.sprite, alpha: 0, duration: 400,
           onComplete: () => sp!.sprite?.setVisible(false),
@@ -715,8 +810,44 @@ export class GameScene extends Phaser.Scene {
             });
           }
 
+        } else if (e.name === 'Slime') {
+          const LOCKED_SLIME = new Set(['slime-attack', 'slime-hurt', 'slime-death']);
+          if (e.health < sp.prevHp && !LOCKED_SLIME.has(sp.animKey)) {
+            sp.animKey = 'slime-hurt';
+            sp.sprite.play('slime-hurt');
+            sp.sprite.once('animationcomplete', () => {
+              if (sp!.animKey === 'slime-hurt') {
+                const moving = Math.abs(e.x - sp!.prevX) > 1 || Math.abs(e.y - sp!.prevY) > 1;
+                sp!.animKey = moving ? 'slime-walk' : 'slime-idle';
+                sp!.sprite?.play(sp!.animKey);
+              }
+            });
+          } else if (!LOCKED_SLIME.has(sp.animKey)) {
+            const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
+            const want   = moving ? 'slime-walk' : 'slime-idle';
+            if (sp.animKey !== want) { sp.animKey = want; sp.sprite.play(want); }
+          }
+
+        } else if (e.name === 'Mimic') {
+          const REVEAL_LOCKED = new Set(['mimic-idle-closed', 'mimic-opening', 'mimic-idle-open', 'mimic-transform']);
+          const BATTLE_LOCKED = new Set(['mimic-attack-1', 'mimic-attack-2', 'mimic-hurt', 'mimic-death']);
+          if (e.health < sp.prevHp && !REVEAL_LOCKED.has(sp.animKey) && !BATTLE_LOCKED.has(sp.animKey)) {
+            sp.animKey = 'mimic-hurt';
+            sp.sprite.play('mimic-hurt');
+            sp.sprite.once('animationcomplete', () => {
+              if (sp!.animKey === 'mimic-hurt') {
+                sp!.animKey = 'mimic-idle-transformed';
+                sp!.sprite?.play('mimic-idle-transformed');
+              }
+            });
+          } else if (!REVEAL_LOCKED.has(sp.animKey) && !BATTLE_LOCKED.has(sp.animKey)) {
+            const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
+            const want   = moving ? 'mimic-walk' : 'mimic-idle-transformed';
+            if (sp.animKey !== want) { sp.animKey = want; sp.sprite.play(want); }
+          }
+
         } else {
-          // Goblin / Skeleton: flash on damage (no hurt animation available)
+          // Goblin / Skeleton / Mushroom: flash on damage (no hurt animation available)
           if (e.health < sp.prevHp) {
             this.tweens.add({
               targets: sp.sprite, alpha: 0.25, duration: 80, yoyo: true, repeat: 1,
@@ -1155,6 +1286,9 @@ export class GameScene extends Phaser.Scene {
     const skeletons = s.currentRoom.enemies.filter(e => e.name === 'Skeleton' && e.isAlive);
     const goblins   = s.currentRoom.enemies.filter(e => e.name === 'Goblin'   && e.isAlive);
     const bats      = s.currentRoom.enemies.filter(e => e.name === 'Bat'      && e.isAlive);
+    const slimes    = s.currentRoom.enemies.filter(e => e.name === 'Slime'    && e.isAlive);
+    const mushrooms = s.currentRoom.enemies.filter(e => e.name === 'Mushroom' && e.isAlive);
+    const mimics    = s.currentRoom.enemies.filter(e => e.name === 'Mimic'    && e.isAlive);
 
     for (const player of s.players) {
       const prevHp = this.prevPlayerHp.get(player.userId) ?? player.currentHp;
@@ -1220,7 +1354,99 @@ export class GameScene extends Phaser.Scene {
           });
         }
       }
+
+      // Slime: play slime-attack on the slime's sprite (melee).
+      for (const sl of slimes) {
+        const sdx = targetX - sl.x;
+        const sdy = targetY - sl.y;
+        if (sdx * sdx + sdy * sdy > 130 * 130) continue;
+        const slSp = this.enemySprites.get(sl.id);
+        if (!slSp?.sprite || slSp.dead) continue;
+        const LOCKED_SLIME = new Set(['slime-attack', 'slime-hurt', 'slime-death']);
+        if (!LOCKED_SLIME.has(slSp.animKey)) {
+          slSp.animKey = 'slime-attack';
+          slSp.sprite.play('slime-attack');
+          slSp.sprite.once('animationcomplete', () => {
+            if (slSp.animKey === 'slime-attack') {
+              const moving = Math.abs(sl.x - slSp.prevX) > 1 || Math.abs(sl.y - slSp.prevY) > 1;
+              slSp.animKey = moving ? 'slime-walk' : 'slime-idle';
+              slSp.sprite?.play(slSp.animKey);
+            }
+          });
+        }
+      }
+
+      // Mushroom: play mushroom-attack then launch a spinning projectile toward the player.
+      for (const mu of mushrooms) {
+        const mdx = targetX - mu.x;
+        const mdy = targetY - mu.y;
+        if (mdx * mdx + mdy * mdy > 220 * 220) continue;
+        const muSp = this.enemySprites.get(mu.id);
+        if (!muSp?.sprite || muSp.dead) continue;
+        if (muSp.animKey !== 'mushroom-attack') {
+          muSp.animKey = 'mushroom-attack';
+          muSp.sprite.play('mushroom-attack');
+          muSp.sprite.once('animationcomplete', () => {
+            if (muSp.animKey === 'mushroom-attack') { muSp.animKey = ''; muSp.sprite?.setFrame(0); }
+          });
+        }
+        const dist = Math.sqrt(mdx * mdx + mdy * mdy);
+        const proj = this.add.sprite(mu.x, mu.y, 'mushroom-projectile', 0).setDepth(15).setScale(1.0);
+        proj.play('mushroom-projectile');
+        this.tweens.add({
+          targets: proj, x: targetX, y: targetY,
+          duration: Math.max(150, (dist / 220) * 400),
+          onComplete: () => proj.destroy(),
+        });
+      }
+
+      // Mimic: randomly play mimic-attack-1 or -2 (only after reveal completes).
+      for (const mi of mimics) {
+        const midx = targetX - mi.x;
+        const midy = targetY - mi.y;
+        if (midx * midx + midy * midy > 130 * 130) continue;
+        const miSp = this.enemySprites.get(mi.id);
+        if (!miSp?.sprite || miSp.dead) continue;
+        const REVEAL_LOCKED = new Set(['mimic-idle-closed', 'mimic-opening', 'mimic-idle-open', 'mimic-transform']);
+        const BATTLE_LOCKED = new Set(['mimic-attack-1', 'mimic-attack-2', 'mimic-hurt']);
+        if (REVEAL_LOCKED.has(miSp.animKey) || BATTLE_LOCKED.has(miSp.animKey)) continue;
+        const atkKey = Math.random() < 0.5 ? 'mimic-attack-1' : 'mimic-attack-2';
+        miSp.animKey = atkKey;
+        miSp.sprite.play(atkKey);
+        miSp.sprite.once('animationcomplete', () => {
+          if (miSp.animKey === atkKey) {
+            miSp.animKey = 'mimic-idle-transformed';
+            miSp.sprite?.play('mimic-idle-transformed');
+          }
+        });
+      }
     }
+  }
+
+  // ── Mimic reveal sequence ──────────────────────────────────────────────────
+
+  private startMimicReveal(sp: EnemySprite) {
+    this.time.delayedCall(1500, () => {
+      if (sp.dead || !sp.sprite) return;
+      sp.animKey = 'mimic-opening';
+      sp.sprite.play('mimic-opening');
+      sp.sprite.once('animationcomplete', () => {
+        if (sp.dead || !sp.sprite) return;
+        sp.animKey = 'mimic-idle-open';
+        sp.sprite.play('mimic-idle-open');
+        this.time.delayedCall(400, () => {
+          if (sp.dead || !sp.sprite) return;
+          sp.animKey = 'mimic-transform';
+          sp.sprite.play('mimic-transform');
+          sp.sprite.once('animationcomplete', () => {
+            if (sp.dead || !sp.sprite) return;
+            sp.animKey = 'mimic-idle-transformed';
+            sp.sprite.play('mimic-idle-transformed');
+            if (sp.label) sp.label.setText('Mimic');
+          });
+        });
+      });
+    });
   }
 
   // ── Cleanup ────────────────────────────────────────────────────────────────
