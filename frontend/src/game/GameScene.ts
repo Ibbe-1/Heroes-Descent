@@ -41,16 +41,20 @@ function roomDisplayName(roomType?: string, roomIndex = 0): string {
 
 // ── Sprite interfaces ───────────────────────────────────────────────────────
 
-// Regular enemies render as coloured rectangles; the Dark Mage boss uses an animated sprite.
+// Regular enemies render as coloured rectangles; boss/Golem use animated sprites.
 interface EnemySprite {
-  body:    Phaser.GameObjects.Rectangle | null;
-  sprite:  Phaser.GameObjects.Sprite    | null;
-  label:   Phaser.GameObjects.Text      | null;
-  prevHp:  number;
-  dead:    boolean;
-  prevX:   number;
-  prevY:   number;
-  animKey: string;
+  body:         Phaser.GameObjects.Rectangle | null;
+  sprite:       Phaser.GameObjects.Sprite    | null;
+  // Golem only: the charge orb sprite shown in front of the Golem during wind-up.
+  chargeSprite: Phaser.GameObjects.Sprite    | null;
+  label:        Phaser.GameObjects.Text      | null;
+  prevHp:       number;
+  dead:         boolean;
+  prevX:        number;
+  prevY:        number;
+  animKey:      string;
+  // Tracks whether isLaserFiring was true last tick to detect the firing transition.
+  wasFiring:    boolean;
 }
 
 // Other players are rendered as animated sprites.
@@ -173,6 +177,20 @@ export class GameScene extends Phaser.Scene {
     this.load.spritesheet('boss-fall',     '/assets/Darkmage/Fall.png',     { frameWidth: 250, frameHeight: 250 });
     // Fireball — 128×160, 4 cols × 5 rows of 32×32; purple = row 1 (frames 4–7)
     this.load.spritesheet('boss-fireball', '/assets/Darkmage/Fireball.png', { frameWidth: 32, frameHeight: 32 });
+
+    // Golem Elite MiniBoss — Character_sheet.png is 1000×1000 (10×10 grid of 100×100 frames)
+    //   Row 0 (frames  0– 3): Idle
+    //   Row 1 (frames 10–17): Walk
+    //   Row 2 (frames 20–28): Attack
+    //   Row 3 (frames 30–37): Hit stagger
+    //   Row 8 (frames 80–83): Death
+    this.load.spritesheet('golem-sheet', '/assets/Golem/Mecha-stone Golem 0.1/PNG sheet/Character_sheet.png', { frameWidth: 100, frameHeight: 100 });
+    // Glowing arm projectile — 300×300 (3×3 grid of 100×100 frames, frames 0–8)
+    this.load.spritesheet('golem-projectile', '/assets/Golem/Mecha-stone Golem 0.1/weapon PNG/arm_projectile_glowing.png', { frameWidth: 100, frameHeight: 100 });
+    // Laser sheet — 300×1500 (1 col × 15 rows of 300×100 frames)
+    //   Frames 0–7:  charge-up orb growing (played as looping wind-up visual)
+    //   Frames 8–14: full laser beam firing (played once when the shot lands)
+    this.load.spritesheet('golem-laser', '/assets/Golem/Mecha-stone Golem 0.1/weapon PNG/Laser_sheet.png', { frameWidth: 300, frameHeight: 100 });
   }
 
   // ── Phaser lifecycle: create ───────────────────────────────────────────────
@@ -183,6 +201,7 @@ export class GameScene extends Phaser.Scene {
     this.createWizardAnims();
     this.createArcherAnims();
     this.createDarkMageAnims();
+    this.createGolemAnims();
 
     this.hpBars      = this.add.graphics().setDepth(20);
     this.aimGraphics = this.add.graphics().setDepth(6);
@@ -294,6 +313,28 @@ export class GameScene extends Phaser.Scene {
     a.create({ key: 'boss-fall',     frames: a.generateFrameNumbers('boss-fall',     { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
     // Purple fireball — row 1 of the shared sheet (frames 4–7)
     a.create({ key: 'boss-fireball', frames: a.generateFrameNumbers('boss-fireball', { start: 4, end: 7 }), frameRate: 10, repeat: -1 });
+  }
+
+  private createGolemAnims() {
+    const a = this.anims;
+    // Character_sheet.png is a 10×10 grid of 100×100 frames.
+    // Row index N starts at frame N*10.
+    //   Row 0 (frames  0– 3): Idle loop — stone golem breathing/glowing
+    //   Row 1 (frames 10–17): Walk — heavy plodding movement
+    //   Row 2 (frames 20–28): Attack — arm-slam or punch animation
+    //   Row 3 (frames 30–37): Hit stagger — recoils when damaged
+    //   Row 8 (frames 80–83): Death — crumbles to the ground
+    a.create({ key: 'golem-idle',     frames: a.generateFrameNumbers('golem-sheet', { start:  0, end:  3 }), frameRate: 6,  repeat: -1 });
+    a.create({ key: 'golem-run',      frames: a.generateFrameNumbers('golem-sheet', { start: 10, end: 17 }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'golem-attack',   frames: a.generateFrameNumbers('golem-sheet', { start: 20, end: 28 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'golem-take-hit', frames: a.generateFrameNumbers('golem-sheet', { start: 30, end: 37 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'golem-death',    frames: a.generateFrameNumbers('golem-sheet', { start: 80, end: 83 }), frameRate: 8,  repeat: 0  });
+    // Glowing arm projectile — arm_projectile_glowing.png is a 3×3 grid of 100×100 frames (0–8)
+    a.create({ key: 'golem-projectile', frames: a.generateFrameNumbers('golem-projectile', { start: 0, end: 8 }), frameRate: 10, repeat: -1 });
+    // Laser charge wind-up — orb growing (frames 0–7, loops while chargePercent is rising)
+    a.create({ key: 'golem-laser-charge', frames: a.generateFrameNumbers('golem-laser', { start: 0, end: 7 }), frameRate: 8, repeat: -1 });
+    // Laser beam fire — full beam extending (frames 8–14, play once when the shot lands)
+    a.create({ key: 'golem-laser-fire', frames: a.generateFrameNumbers('golem-laser', { start: 8, end: 14 }), frameRate: 12, repeat: 0 });
   }
 
   private initPlayerSprite(heroClass: string) {
@@ -559,30 +600,48 @@ export class GameScene extends Phaser.Scene {
     let sp = this.enemySprites.get(e.id);
     if (!sp) {
       if (e.name === 'Dark Mage') {
+        // Dark Mage boss — animated sprite, 240 px rendered (scale 0.96 on 250 px frames)
         const spr = this.add.sprite(e.x, e.y, 'boss-idle', 0).setDepth(8).setScale(0.96);
         spr.play('boss-idle');
         const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 22, 'Dark Mage', {
           fontFamily: 'Courier New', fontSize: '10px', color: '#ffffff',
         }).setOrigin(0.5, 1).setDepth(9);
-        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'boss-idle' };
+        sp = { body: null, sprite: spr, chargeSprite: null, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'boss-idle', wasFiring: false };
+
+      } else if (e.name === 'Golem') {
+        // Golem Elite MiniBoss — animated sprite using Character_sheet.png (100×100 frames)
+        // Scale 1.4 renders the Golem at ~140 px tall, slightly bigger than regular enemies.
+        const spr = this.add.sprite(e.x, e.y, 'golem-sheet', 0).setDepth(8).setScale(1.4);
+        spr.play('golem-idle');
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 10, 'Golem', {
+          fontFamily: 'Courier New', fontSize: '10px', color: '#aabbcc',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, chargeSprite: null, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'golem-idle', wasFiring: false };
+
       } else {
+        // Regular enemies (Skeleton, Goblin, Spider) — coloured rectangle
         const size  = 28;
         const col   = ENEMY_COLOR[e.name] ?? 0xff4444;
         const body  = this.add.rectangle(e.x, e.y, size, size, col).setDepth(8);
         const label = this.add.text(e.x, e.y - (size / 2 + 6), e.name, {
           fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
         }).setOrigin(0.5, 1).setDepth(9);
-        sp = { body, sprite: null, label, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '' };
+        sp = { body, sprite: null, chargeSprite: null, label, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '', wasFiring: false };
       }
       this.enemySprites.set(e.id, sp);
     }
 
     if (!e.isAlive && !sp.dead) {
       sp.dead = true;
+      // Destroy any active charge orb when the Golem dies.
+      sp.chargeSprite?.destroy();
+      sp.chargeSprite = null;
       if (sp.sprite) {
-        sp.animKey = 'boss-death';
-        sp.sprite.play('boss-death');
-        sp.label?.setAlpha(0);
+        // Animated enemy dies — pick the right death key based on the enemy name.
+        const deathKey = e.name === 'Golem' ? 'golem-death' : 'boss-death';
+        sp.animKey = deathKey;
+        sp.sprite.play(deathKey);
+        sp.label?.setAlpha(0);  // hide name label immediately on death
         sp.sprite.once('animationcomplete', () => {
           this.tweens.add({
             targets: sp!.sprite, alpha: 0, duration: 500,
@@ -598,27 +657,90 @@ export class GameScene extends Phaser.Scene {
       }
     } else if (e.isAlive) {
       if (sp.sprite) {
-        sp.sprite.setPosition(e.x, e.y);
-        sp.label?.setPosition(e.x, e.y - sp.sprite.displayHeight / 2 - 22);
+        // Pick animation keys based on whether this is the Golem or the Dark Mage.
+        const isGolem   = e.name === 'Golem';
+        const idleKey   = isGolem ? 'golem-idle'     : 'boss-idle';
+        const runKey    = isGolem ? 'golem-run'      : 'boss-run';
+        const hitKey    = isGolem ? 'golem-take-hit' : 'boss-take-hit';
+        const attackKey = isGolem ? 'golem-attack'   : 'boss-attack';
+        const deathKey  = isGolem ? 'golem-death'    : 'boss-death';
+        const labelOffsetY = isGolem ? 10 : 22;
 
+        sp.sprite.setPosition(e.x, e.y);
+        sp.label?.setPosition(e.x, e.y - sp.sprite.displayHeight / 2 - labelOffsetY);
+
+        // ── Golem laser charge visual ──────────────────────────────────────────
+        if (isGolem) {
+          // Beam rotation angle — always computed from the server-locked direction vector.
+          // atan2(laserDirY, laserDirX) gives the exact angle the server aimed at charge start.
+          const beamAngle = Math.atan2(e.laserDirY, e.laserDirX);
+
+          if (e.chargePercent > 0) {
+            // Charging — show the growing orb sprite in front of the Golem.
+            // Origin (0, 0.5) puts the orb (left side of the frame) at the Golem's center;
+            // setRotation aims it toward the locked-in target direction.
+            if (!sp.chargeSprite) {
+              const cs = this.add.sprite(e.x, e.y, 'golem-laser', 0)
+                .setDepth(16)
+                .setOrigin(0, 0.5)
+                .setScale(1.0)
+                .setRotation(beamAngle);
+              cs.play('golem-laser-charge');
+              sp.chargeSprite = cs;
+            } else {
+              // Update position and aim each tick while charging (direction stays fixed).
+              sp.chargeSprite.setPosition(e.x, e.y).setRotation(beamAngle);
+            }
+            // Keep the Golem body in idle during charge (it's winding up, not running).
+            if (sp.animKey !== idleKey && sp.animKey !== hitKey && sp.animKey !== deathKey) {
+              sp.animKey = idleKey;
+              sp.sprite.play(idleKey);
+            }
+          } else if (sp.chargeSprite) {
+            // Charge ended (fired or cancelled) — remove the charge orb sprite.
+            sp.chargeSprite.destroy();
+            sp.chargeSprite = null;
+          }
+
+          // ── Laser beam fire visual ─────────────────────────────────────────────
+          // Detect the first tick where isLaserFiring flips from false → true.
+          // Spawn a beam sprite that plays golem-laser-fire, rotated to the aim direction.
+          if (e.isLaserFiring && !sp.wasFiring) {
+            const beam = this.add.sprite(e.x, e.y, 'golem-laser', 8)
+              .setDepth(17)
+              .setOrigin(0, 0.5)   // anchor at left edge — orb at Golem center, beam extends out
+              .setScale(1.5)       // 450 px long rendered beam
+              .setRotation(beamAngle);  // aim exactly where the server was pointing
+            beam.play('golem-laser-fire');
+            beam.once('animationcomplete', () => beam.destroy());
+            // Brief screen flash so players feel the laser impact.
+            this.cameras.main.flash(200, 0, 200, 255, false);
+          }
+          sp.wasFiring = e.isLaserFiring;
+        }
+
+        // Flip horizontally so the enemy always faces the direction it's moving.
         const mdx = e.x - sp.prevX;
         if (mdx < -1)     sp.sprite.setFlipX(true);
         else if (mdx > 1) sp.sprite.setFlipX(false);
 
-        const locked = sp.animKey === 'boss-take-hit' || sp.animKey === 'boss-death' || sp.animKey === 'boss-attack';
-        if (e.health < sp.prevHp && !locked) {
-          sp.animKey = 'boss-take-hit';
-          sp.sprite.play('boss-take-hit');
+        const locked = sp.animKey === hitKey || sp.animKey === deathKey || sp.animKey === attackKey;
+        // Don't switch anim while charging (handled above) or locked in a one-shot anim.
+        const charging = isGolem && e.chargePercent > 0;
+        if (e.health < sp.prevHp && !locked && !charging) {
+          // Play the hit-stagger animation when HP drops, then return to idle/run.
+          sp.animKey = hitKey;
+          sp.sprite.play(hitKey);
           sp.sprite.once('animationcomplete', () => {
-            if (sp!.animKey === 'boss-take-hit') {
+            if (sp!.animKey === hitKey) {
               const moving = Math.abs(e.x - sp!.prevX) > 1 || Math.abs(e.y - sp!.prevY) > 1;
-              sp!.animKey = moving ? 'boss-run' : 'boss-idle';
+              sp!.animKey = moving ? runKey : idleKey;
               sp!.sprite?.play(sp!.animKey);
             }
           });
-        } else if (!locked) {
+        } else if (!locked && !charging) {
           const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
-          const want   = moving ? 'boss-run' : 'boss-idle';
+          const want   = moving ? runKey : idleKey;
           if (sp.animKey !== want) {
             sp.animKey = want;
             sp.sprite.play(want);
@@ -668,6 +790,21 @@ export class GameScene extends Phaser.Scene {
       if (sp.sprite) {
         const top = sp.sprite.y - sp.sprite.displayHeight / 2;
         this.drawBar(sp.sprite.x, top - 8, e.health, e.maxHealth, 0x8e44ad, 60);
+
+        // ── Golem laser charge bar ────────────────────────────────────────────
+        // Drawn as a cyan bar directly below the HP bar, fills left→right as charge
+        // progresses from 0 % to 100 %. Label text shows the numeric percentage.
+        if (e.name === 'Golem') {
+          if (e.chargePercent > 0) {
+            // Cyan fill bar (charge progress) below the HP bar.
+            this.drawBar(sp.sprite.x, top - 1, e.chargePercent, 1, 0x00ccff, 60);
+            // Update label to show "⚡ XX%" so the player knows how close the laser is.
+            sp.label?.setText(`⚡ ${Math.round(e.chargePercent * 100)}%`);
+          } else {
+            // Restore the default "Golem" label when not charging.
+            if (sp.label?.text !== 'Golem') sp.label?.setText('Golem');
+          }
+        }
       } else if (sp.body) {
         const top = sp.body.y - sp.body.height / 2;
         this.drawBar(sp.body.x, top - 8, e.health, e.maxHealth, 0xe74c3c, sp.body.width);
@@ -991,46 +1128,73 @@ export class GameScene extends Phaser.Scene {
 
     if (!incoming.size) return;
 
-    // Find the Dark Mage sprite so we can play its attack animation when it fires.
-    let bossSp: EnemySprite | undefined;
+    // Determine which type of attacker is alive in this room so we can use the
+    // correct projectile sprite and trigger the correct attack animation.
+    // Boss rooms have Dark Mage; Elite rooms have Golem — they never mix.
+    let attackerSp: EnemySprite | undefined;
+    let attackerName = '';
     for (const [id, sp] of this.enemySprites) {
-      if (sp.sprite && !sp.dead && s.currentRoom.enemies.find(e => e.id === id && e.isAlive)) {
-        bossSp = sp;
+      const enemy = s.currentRoom.enemies.find(e => e.id === id && e.isAlive);
+      if (sp.sprite && !sp.dead && enemy) {
+        attackerSp   = sp;
+        attackerName = enemy.name;   // 'Dark Mage' or 'Golem'
         break;
       }
     }
+
+    // Pick the projectile sprite key and scale based on the attacker type.
+    // Dark Mage → purple fireball (boss-fireball, scale 2.5)
+    // Golem → glowing arm projectile (golem-projectile, scale 2.0 — 200×200 px, clearly visible)
+    const projKey   = attackerName === 'Golem' ? 'golem-projectile' : 'boss-fireball';
+    const projScale = attackerName === 'Golem' ? 2.0 : 2.5;
 
     // ── Create or update a sprite for each active projectile ──
     for (const p of s.activeProjectiles ?? []) {
       const existing = this.projectileSprites.get(p.id);
 
       if (!existing) {
-        // ── New fireball: create the sprite at the server's reported position ──
-        const spr = this.add.sprite(p.x, p.y, 'boss-fireball').setDepth(15).setScale(2.5);
-        spr.play('boss-fireball');
+        // ── New projectile: create the sprite at the server's reported position ──
+        const spr = this.add.sprite(p.x, p.y, projKey).setDepth(15).setScale(projScale);
+
+        // Rotate the arm-projectile to face its actual travel direction.
+        // The sprite faces RIGHT by default; atan2 from the attacker to the projectile
+        // gives the correct angle for any direction the Golem threw it.
+        if (attackerName === 'Golem' && attackerSp?.sprite) {
+          const dx = p.x - attackerSp.sprite.x;
+          const dy = p.y - attackerSp.sprite.y;
+          if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+            spr.setRotation(Math.atan2(dy, dx));
+          }
+        }
+
+        spr.play(attackerName === 'Golem' ? 'golem-projectile' : 'boss-fireball');
         this.projectileSprites.set(p.id, spr);
 
-        // Trigger the boss attack animation the moment it launches a fireball.
-        if (bossSp?.sprite && bossSp.animKey !== 'boss-death' && bossSp.animKey !== 'boss-attack') {
-          bossSp.animKey = 'boss-attack';
-          bossSp.sprite.play('boss-attack');
-          bossSp.sprite.once('animationcomplete', () => {
-            if (bossSp!.animKey === 'boss-attack') {
-              bossSp!.animKey = 'boss-idle';
-              bossSp!.sprite?.play('boss-idle');
-            }
-          });
+        // Trigger the attacker's fire animation the moment it launches a projectile.
+        if (attackerSp?.sprite) {
+          const atkKey  = attackerName === 'Golem' ? 'golem-attack'  : 'boss-attack';
+          const idleKey = attackerName === 'Golem' ? 'golem-idle'    : 'boss-idle';
+          if (attackerSp.animKey !== atkKey && attackerSp.animKey !== (attackerName === 'Golem' ? 'golem-death' : 'boss-death')) {
+            attackerSp.animKey = atkKey;
+            attackerSp.sprite.play(atkKey);
+            attackerSp.sprite.once('animationcomplete', () => {
+              if (attackerSp!.animKey === atkKey) {
+                attackerSp!.animKey = idleKey;
+                attackerSp!.sprite?.play(idleKey);
+              }
+            });
+          }
         }
 
       } else {
-        // ── Existing fireball: smoothly move to the server's updated position ──
+        // ── Existing projectile: smoothly move to the server's updated position ──
         // The server moves the projectile ~26 px per 100 ms tick; tweening over
         // exactly 100 ms with Linear easing reproduces that constant speed visually.
         this.tweens.add({
           targets: existing,
           x: p.x, y: p.y,
           duration: 100,  // one server tick — keeps sprite in lockstep with server
-          ease: 'Linear', // no acceleration — the ball travels at constant speed
+          ease: 'Linear', // no acceleration — the projectile travels at constant speed
         });
       }
     }
@@ -1082,6 +1246,7 @@ export class GameScene extends Phaser.Scene {
     if (sp) {
       sp.body?.destroy();
       sp.sprite?.destroy();
+      sp.chargeSprite?.destroy();  // remove Golem charge orb if present
       sp.label?.destroy();
     }
     this.enemySprites.delete(id);

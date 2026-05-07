@@ -45,6 +45,30 @@ public static class RoomBounds
     public const float BossRangedCooldownMs = 1400f;
     public const float BossStopDistance     = 70f;
 
+    // Golem Elite MiniBoss combat ranges
+    // ≤ GolemMeleeRange       → stone-fist melee (global 800 ms tick)
+    // GolemMeleeRange–GolemRangedMax → glowing arm projectile (per-instance 2 000 ms cooldown)
+    // > GolemRangedMax        → chase only, no attacks
+    public const float GolemMeleeRange       = 90f;   // wider reach than boss — big stone arm
+    public const float GolemRangedMax        = 400f;  // arm-projectile range (wider gap = more chances to fire)
+    public const float GolemRangedCooldownMs = 2000f; // slower rate of fire — compensated by high HP
+    public const float GolemStopDistance     = 80f;   // stops chasing when this close
+
+    // Golem laser charge thresholds and timing
+    // The Golem charges its laser once each time HP crosses 75 %, 50 %, and 25 %.
+    // During the 2 s wind-up it freezes in place and gains bonus defence;
+    // when it fires the laser it damages ALL alive players and defence resets.
+    public const float GolemChargeDurationMs    = 2000f; // 2 s charge before the laser fires
+    public const int   GolemLaserDefenseBonus   = 15;    // extra defence during wind-up
+    public const float GolemLaserFiringVisualMs = 700f;  // how long isLaserFiring stays true after the shot
+    public const float GolemLaserDamageMultiplier = 2.5f; // laser hits harder than a normal attack
+    // Beam corridor — only players inside this ray get damaged.
+    // The direction is locked toward the nearest player when the charge begins,
+    // so backing out of the corridor (> GolemLaserRange px away, or moving sideways
+    // more than GolemLaserWidth px off the beam line) avoids all damage.
+    public const float GolemLaserRange = 500f; // maximum beam length in pixels
+    public const float GolemLaserWidth = 80f;  // half-width of the hit corridor (±80 px off center)
+
     // Enemies won't spawn within this radius of the room centre,
     // giving the party a safe landing zone at the start of each room
     public const float EnemyMinSpawnDist = 200f;
