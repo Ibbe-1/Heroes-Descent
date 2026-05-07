@@ -70,7 +70,7 @@ public class DungeonGenerator
         {
             0 => new Skeleton(),
             1 => new Goblin(),
-            _ => new Spider(),
+            _ => new Bat(),
         };
 
         // Floor scaling: each floor above 1 boosts HP, attack, and defence slightly.
