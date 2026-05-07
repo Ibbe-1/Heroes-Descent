@@ -22,6 +22,10 @@ public class EnemyInstance
     public float X { get; set; }
     public float Y { get; set; }
 
+    // Tracks when the boss last fired a ranged shot — separate from the global
+    // LastEnemyTick so melee and ranged attacks run on independent cooldowns.
+    public DateTime LastRangedAttackTime { get; set; } = DateTime.MinValue;
+
     public EnemyInstance(Enemy enemy, float x = 480f, float y = 320f)
     {
         Enemy = enemy;

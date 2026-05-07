@@ -1,4 +1,5 @@
 using Heroes_Descent.Application.Dtos;
+using Heroes_Descent.Core.Entities.Enemies;
 using Heroes_Descent.Core.Entities.Heroes;
 using Heroes_Descent.Core.GameState;
 
@@ -319,9 +320,9 @@ public class GameService
             float dy   = target.Y - inst.Y;
             float dist = MathF.Sqrt(dx * dx + dy * dy);
 
-            // Ranged enemies stop when inside their shoot range; melee enemies stop at 30 px.
-            float stopDist = inst.Enemy.ShootsProjectiles
-                ? inst.Enemy.ProjectileRange - 30f
+            // Boss stops at melee range; ranged enemies stop at their shoot range; others at 30 px.
+            float stopDist = inst.Enemy is BossEnemy ? RoomBounds.BossStopDistance
+                : inst.Enemy.ShootsProjectiles ? inst.Enemy.ProjectileRange - 30f
                 : 30f;
             if (dist < stopDist) continue;
 
@@ -333,20 +334,33 @@ public class GameService
         }
     }
 
-    // Handles enemy attacks — called every tick by EnemyAiService, but internally
-    // only fires every 800 ms (checked via session.LastEnemyTick).
-    // Only enemies within EnemyAttackRange (80 px) of a player deal damage,
-    // which rewards players who keep their distance.
+    // Handles enemy attacks — called every 100 ms by EnemyAiService.
+    //
+    // Regular enemies use a shared 800 ms global tick.
+    // The Dark Mage boss uses a hybrid model:
+    //   • Melee  (≤ BossMeleeRange px)  — fires on the global 800 ms tick.
+    //   • Ranged (BossMeleeRange–BossRangedMax px) — fires on its own 1 400 ms cooldown.
+    //   • Chase  (> BossRangedMax px)   — no attack; boss just closes the gap.
     public List<string> TickEnemyAttacks(GameSession session)
     {
-        if (DateTime.UtcNow - session.LastEnemyTick < TimeSpan.FromMilliseconds(800))
-            return [];   // 800 ms hasn't elapsed yet
+        var now = DateTime.UtcNow;
 
-        session.LastEnemyTick = DateTime.UtcNow;
+        bool globalReady = now - session.LastEnemyTick >= TimeSpan.FromMilliseconds(800);
 
-        // Tick passive resource regeneration for the Archer class.
-        foreach (var p in session.Players)
-            if (p.Hero is Archer a) a.TryRegenEnergy();
+        // Allow the method to run outside the global tick if the boss has a
+        // ranged shot ready — melee and ranged run on independent cooldowns.
+        bool bossRangedReady = session.CurrentRoom.Enemies.Any(e =>
+            e.Enemy is BossEnemy && e.Enemy.IsAlive &&
+            (now - e.LastRangedAttackTime).TotalMilliseconds >= RoomBounds.BossRangedCooldownMs);
+
+        if (!globalReady && !bossRangedReady) return [];
+
+        if (globalReady)
+        {
+            session.LastEnemyTick = now;
+            foreach (var p in session.Players)
+                if (p.Hero is Archer a) a.TryRegenEnergy();
+        }
 
         var alive = session.Players.Where(p => p.Hero.IsAlive).ToList();
         if (!alive.Any()) return [];
@@ -355,39 +369,129 @@ public class GameService
 
         foreach (var inst in session.CurrentRoom.Enemies.Where(e => e.Enemy.IsAlive))
         {
-            // Ranged enemies shoot from their projectile range; melee use EnemyAttackRange.
-            float atkRange = inst.Enemy.ShootsProjectiles && inst.Enemy.ProjectileRange > 0f
-                ? inst.Enemy.ProjectileRange
-                : RoomBounds.EnemyAttackRange;
-            var target = alive
-                .Where(p => Dist(p.X, p.Y, inst.X, inst.Y) <= atkRange)
-                .MinBy(p => Dist(p.X, p.Y, inst.X, inst.Y));
-
+            var target = alive.MinBy(p => Dist(p.X, p.Y, inst.X, inst.Y));
             if (target is null) continue;
 
-            int rawDmg = inst.Enemy.Attack;
+            float dist = Dist(target.X, target.Y, inst.X, inst.Y);
 
-            // If the warrior activated Shield Block since the last tick, halve this hit.
-            if (target.Hero is Warrior w && w.IsBlocking)
+            if (inst.Enemy is BossEnemy)
             {
-                rawDmg /= 2;
-                w.ClearBlock();
-                log.Add($"{target.Username} blocks! Hit reduced to {rawDmg}.");
+                if (dist <= RoomBounds.BossMeleeRange && globalReady)
+                {
+                    // Player is right next to the boss — apply melee damage instantly.
+                    log.AddRange(ApplyHit(inst.Enemy.Attack, inst.Enemy.Name, target, session, alive));
+                }
+                else if (dist > RoomBounds.BossMeleeRange && dist <= RoomBounds.BossRangedMax &&
+                         (now - inst.LastRangedAttackTime).TotalMilliseconds >= RoomBounds.BossRangedCooldownMs)
+                {
+                    // Player is at mid range — launch a fireball that travels toward where
+                    // the player is standing RIGHT NOW. Moving after the shot is fired dodges it.
+                    inst.LastRangedAttackTime = now;
+                    session.ActiveProjectiles.Add(
+                        new ActiveProjectile(inst.X, inst.Y, target.X, target.Y, inst.Enemy.Attack));
+                    log.Add($"Dark Mage fires a fireball at {target.Username}!");
+                }
+                // else: player is beyond BossRangedMax — boss chases, no attack.
+            }
+            else if (globalReady)
+            {
+                // Regular enemies — unchanged instant melee/ranged damage.
+                float atkRange = inst.Enemy.ShootsProjectiles && inst.Enemy.ProjectileRange > 0f
+                    ? inst.Enemy.ProjectileRange
+                    : RoomBounds.EnemyAttackRange;
+                if (dist > atkRange) continue;
+                log.AddRange(ApplyHit(inst.Enemy.Attack, inst.Enemy.Name, target, session, alive));
             }
 
-            var actual = target.Hero.TakeDamage(rawDmg);
-            log.Add($"{inst.Enemy.Name} strikes {target.Username} for {actual} dmg!");
+            if (session.IsGameOver) break;
+        }
 
-            if (!target.Hero.IsAlive)
+        return log;
+    }
+
+    // Moves every active fireball one step forward and checks whether it has hit
+    // a player or exceeded its maximum range.
+    //
+    // Called every 100 ms tick — the same rate as MoveEnemies — so projectile
+    // positions are always current when BuildDto snapshots them for the broadcast.
+    public List<string> MoveProjectiles(GameSession session, float deltaMs)
+    {
+        if (session.ActiveProjectiles.Count == 0) return [];
+
+        var log          = new List<string>();
+        float dt         = deltaMs / 1000f;  // convert ms → seconds for distance formula
+        var alivePlayers = session.Players.Where(p => p.Hero.IsAlive).ToList();
+
+        // Iterate over a snapshot so we can safely remove entries mid-loop.
+        foreach (var proj in session.ActiveProjectiles.ToList())
+        {
+            // Move the fireball forward along its fixed direction vector.
+            // Speed * dt gives the distance to travel this tick in pixels.
+            float step = ActiveProjectile.Speed * dt;
+            proj.X += proj.DirX * step;
+            proj.Y += proj.DirY * step;
+            proj.DistanceTravelled += step;
+
+            // Remove the fireball if it has left the room area or exceeded max range.
+            // This prevents it from flying forever if everyone sidesteps it.
+            bool outOfBounds = proj.X < RoomBounds.Left  || proj.X > RoomBounds.Right
+                            || proj.Y < RoomBounds.Top   || proj.Y > RoomBounds.Bottom;
+            if (outOfBounds || proj.DistanceTravelled >= ActiveProjectile.MaxRange)
             {
-                log.Add($"{target.Username} has fallen!");
-                alive.Remove(target);   // don't keep attacking a corpse this tick
-                if (!alive.Any())
-                {
-                    session.IsGameOver = true;
-                    log.Add("The party has been wiped out...");
-                    break;
-                }
+                session.ActiveProjectiles.Remove(proj);
+                continue;
+            }
+
+            // Check every alive player — first one within HitRadius takes the damage.
+            bool hitSomeone = false;
+            foreach (var player in alivePlayers)
+            {
+                float dx   = player.X - proj.X;
+                float dy   = player.Y - proj.Y;
+                float dist = MathF.Sqrt(dx * dx + dy * dy);
+
+                if (dist > ActiveProjectile.HitRadius) continue;  // missed this player
+
+                // Hit! Apply damage and remove the fireball — it can only hit once.
+                log.AddRange(ApplyHit(proj.Damage, "Dark Mage's fireball", player, session, alivePlayers));
+                session.ActiveProjectiles.Remove(proj);
+                hitSomeone = true;
+                break;
+            }
+
+            if (hitSomeone && session.IsGameOver) break;
+        }
+
+        return log;
+    }
+
+    // Applies raw damage from any source to a target player.
+    // Handles the Warrior's Shield Block (halves the hit and clears the flag).
+    // Removes dead players from the alive list and sets IsGameOver if the party wipes.
+    private static List<string> ApplyHit(
+        int rawDmg, string attackerName, PlayerState target, GameSession session, List<PlayerState> alive)
+    {
+        var log = new List<string>();
+
+        // Warrior Shield Block halves the incoming damage — works against fireballs too.
+        if (target.Hero is Warrior w && w.IsBlocking)
+        {
+            rawDmg /= 2;
+            w.ClearBlock();
+            log.Add($"{target.Username} blocks! Hit reduced to {rawDmg}.");
+        }
+
+        var actual = target.Hero.TakeDamage(rawDmg);
+        log.Add($"{attackerName} hits {target.Username} for {actual} dmg!");
+
+        if (!target.Hero.IsAlive)
+        {
+            log.Add($"{target.Username} has fallen!");
+            alive.Remove(target);  // don't hit a corpse again this tick
+            if (!alive.Any())
+            {
+                session.IsGameOver = true;
+                log.Add("The party has been wiped out...");
             }
         }
 
@@ -430,6 +534,11 @@ public class GameService
             );
         }).ToList();
 
+        // Snapshot all in-flight projectile positions so the frontend can place sprites accurately.
+        var activeProjectiles = session.ActiveProjectiles
+            .Select(p => new ActiveProjectileDto(p.Id.ToString(), p.X, p.Y))
+            .ToList();
+
         return new GameStateDto(
             session.SessionId,
             session.CurrentRoomIndex,
@@ -437,7 +546,8 @@ public class GameService
             roomDto, players,
             session.RecentLog.TakeLast(15).ToList(),
             session.IsGameOver,
-            session.IsVictory
+            session.IsVictory,
+            activeProjectiles
         );
     }
 

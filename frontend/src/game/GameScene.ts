@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import type { GameState, EnemyState, PlayerState } from '../types/gameTypes';
+import type { GameState, EnemyState, PlayerState, ActiveProjectile } from '../types/gameTypes';
 import type { GameEngine } from './gameEngine';
 
 // Room bounds — pixel coordinates that must match RoomBounds.cs on the server.
@@ -193,8 +193,12 @@ export class GameScene extends Phaser.Scene {
   private myLabel!:  Phaser.GameObjects.Text;
   private hpBars!:   Phaser.GameObjects.Graphics;
 
-  private others:       Map<string, OtherSprite> = new Map();
-  private enemySprites: Map<string, EnemySprite>  = new Map();
+  private others:           Map<string, OtherSprite> = new Map();
+  private enemySprites:     Map<string, EnemySprite>  = new Map();
+  // Tracks one fireball sprite per active server-side projectile ID.
+  // Entries are added when a new ID appears in state.activeProjectiles and
+  // destroyed (with an impact burst) when the ID disappears.
+  private projectileSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
 
   private myHeroClass    = '';
   private prevPlayerHp:  Map<string, number> = new Map();
@@ -259,6 +263,8 @@ export class GameScene extends Phaser.Scene {
     this.load.spritesheet('boss-death',    '/assets/Darkmage/Death.png',    { frameWidth: 250, frameHeight: 250 });
     this.load.spritesheet('boss-jump',     '/assets/Darkmage/Jump.png',     { frameWidth: 250, frameHeight: 250 });
     this.load.spritesheet('boss-fall',     '/assets/Darkmage/Fall.png',     { frameWidth: 250, frameHeight: 250 });
+    // Fireball — 128×160, 4 cols × 5 rows of 32×32; purple = row 1 (frames 4–7)
+    this.load.spritesheet('boss-fireball', '/assets/Darkmage/Fireball.png', { frameWidth: 32, frameHeight: 32 });
   }
 
   // ── Phaser lifecycle: create ───────────────────────────────────────────────
@@ -291,14 +297,16 @@ export class GameScene extends Phaser.Scene {
     }).setOrigin(0.5, 1).setDepth(11);
 
     const kb = this.input.keyboard!;
-    this.kW     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.W);
-    this.kA     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.A);
-    this.kS     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);
-    this.kD     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.D);
-    this.kSpace = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
-    this.kQ     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
+    // W / A / S / D — move the player up, left, down, right
+    this.kW     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.W);  // move up
+    this.kA     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.A);  // move left
+    this.kS     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);  // move down
+    this.kD     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.D);  // move right
+    this.kSpace = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE); // basic attack toward mouse cursor
+    this.kQ     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q);    // class ability (Warrior: Shield Block, Wizard: Fireball, Archer: Multi-Shot)
 
-    // Prevent WASD / Space / Q from triggering browser defaults (page scroll, etc.)
+    // Stop the browser from intercepting these keys.
+    // Without this, pressing W/S would scroll the page and Space would jump to the bottom.
     kb.addCapture([
       Phaser.Input.Keyboard.KeyCodes.W,
       Phaser.Input.Keyboard.KeyCodes.A,
@@ -325,7 +333,7 @@ export class GameScene extends Phaser.Scene {
         this.initPlayerSprite(hc);
       }
     });
-    this.game.events.on('stateUpdate',  (s: GameState)  => this.applyState(s));
+    this.game.events.on('stateUpdate',  (s: GameState)  => { this.syncProjectiles(s); this.applyState(s); });
 
     this.game.canvas.setAttribute('tabindex', '0');
     this.game.canvas.focus();
@@ -380,6 +388,8 @@ export class GameScene extends Phaser.Scene {
     a.create({ key: 'boss-death',    frames: a.generateFrameNumbers('boss-death',    { start: 0, end: 6 }), frameRate: 8,  repeat: 0  });
     a.create({ key: 'boss-jump',     frames: a.generateFrameNumbers('boss-jump',     { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
     a.create({ key: 'boss-fall',     frames: a.generateFrameNumbers('boss-fall',     { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
+    // Purple fireball — row 1 of the shared sheet (frames 4–7)
+    a.create({ key: 'boss-fireball', frames: a.generateFrameNumbers('boss-fireball', { start: 4, end: 7 }), frameRate: 10, repeat: -1 });
   }
 
   private initPlayerSprite(heroClass: string) {
@@ -411,13 +421,16 @@ export class GameScene extends Phaser.Scene {
   // ── Movement ───────────────────────────────────────────────────────────────
 
   private move(delta: number) {
+    // Convert speed from px/sec to px/frame using the actual elapsed time.
     const s = this.SPEED * (delta / 1000);
     let dx = 0, dy = 0;
-    if (this.kW.isDown) dy -= s;
-    if (this.kS.isDown) dy += s;
-    if (this.kA.isDown) dx -= s;
-    if (this.kD.isDown) dx += s;
+    if (this.kW.isDown) dy -= s; // W → move up
+    if (this.kS.isDown) dy += s; // S → move down
+    if (this.kA.isDown) dx -= s; // A → move left
+    if (this.kD.isDown) dx += s; // D → move right
 
+    // Diagonal movement would be faster (√2 ≈ 1.41×) without this normalisation.
+    // Multiplying by 0.707 (1/√2) keeps diagonal speed equal to cardinal speed.
     if (dx && dy) { dx *= 0.707; dy *= 0.707; }
 
     const newX = Phaser.Math.Clamp(this.localX + dx, R.L + 16, R.R - 16);
@@ -505,6 +518,7 @@ export class GameScene extends Phaser.Scene {
     if (s.currentRoomIndex !== this.lastRoomIndex) {
       this.lastRoomIndex = s.currentRoomIndex;
       this.clearEnemies();
+      this.clearProjectiles();  // discard any fireballs still in flight from the previous room
       this.clearRoomVisuals();
       this.drawRoom(s.currentRoomIndex, s.currentRoom.type);
       this.showRoomBanner(s.currentRoomIndex, s.currentRoom.type);
@@ -1039,18 +1053,94 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  // ── Boss fireball rendering ────────────────────────────────────────────────
+
+  // Keeps the projectileSprites map in sync with s.activeProjectiles each tick.
+  //
+  // How it works:
+  //   • New ID in state  → create a fireball sprite at the server position.
+  //   • Existing ID      → tween the sprite to the updated server position (100 ms = one tick).
+  //   • ID gone from state → fireball hit or expired; destroy sprite with an impact burst.
+  //
+  // Because the server only applies damage when the projectile physically reaches
+  // a player, moving out of its path after it is fired genuinely dodges the damage.
+  private syncProjectiles(s: GameState) {
+    const incoming = new Set((s.activeProjectiles ?? []).map(p => p.id));
+
+    // ── Destroy sprites for projectiles that no longer exist on the server ──
+    for (const [id, spr] of this.projectileSprites) {
+      if (incoming.has(id)) continue;
+
+      // The server removed this ID — the fireball either hit someone or ran out of range.
+      // Show a purple burst at the sprite's last known position as visual feedback.
+      const burst = this.add.arc(spr.x, spr.y, 10, 0, 360, false, 0x8b5cf6, 0.85).setDepth(15);
+      this.tweens.add({
+        targets: burst, scaleX: 5, scaleY: 5, alpha: 0, duration: 260,
+        onComplete: () => burst.destroy(),
+      });
+      spr.destroy();
+      this.projectileSprites.delete(id);
+    }
+
+    if (!incoming.size) return;
+
+    // Find the Dark Mage sprite so we can play its attack animation when it fires.
+    let bossSp: EnemySprite | undefined;
+    for (const [id, sp] of this.enemySprites) {
+      if (sp.sprite && !sp.dead && s.currentRoom.enemies.find(e => e.id === id && e.isAlive)) {
+        bossSp = sp;
+        break;
+      }
+    }
+
+    // ── Create or update a sprite for each active projectile ──
+    for (const p of s.activeProjectiles ?? []) {
+      const existing = this.projectileSprites.get(p.id);
+
+      if (!existing) {
+        // ── New fireball: create the sprite at the server's reported position ──
+        const spr = this.add.sprite(p.x, p.y, 'boss-fireball').setDepth(15).setScale(2.5);
+        spr.play('boss-fireball');
+        this.projectileSprites.set(p.id, spr);
+
+        // Trigger the boss attack animation the moment it launches a fireball.
+        if (bossSp?.sprite && bossSp.animKey !== 'boss-death' && bossSp.animKey !== 'boss-attack') {
+          bossSp.animKey = 'boss-attack';
+          bossSp.sprite.play('boss-attack');
+          bossSp.sprite.once('animationcomplete', () => {
+            if (bossSp!.animKey === 'boss-attack') {
+              bossSp!.animKey = 'boss-idle';
+              bossSp!.sprite?.play('boss-idle');
+            }
+          });
+        }
+
+      } else {
+        // ── Existing fireball: smoothly move to the server's updated position ──
+        // The server moves the projectile ~26 px per 100 ms tick; tweening over
+        // exactly 100 ms with Linear easing reproduces that constant speed visually.
+        this.tweens.add({
+          targets: existing,
+          x: p.x, y: p.y,
+          duration: 100,  // one server tick — keeps sprite in lockstep with server
+          ease: 'Linear', // no acceleration — the ball travels at constant speed
+        });
+      }
+    }
+  }
+
+  // Destroys all fireball sprites without impact bursts.
+  // Called on room transition so no stale fireballs linger in the new room.
+  private clearProjectiles() {
+    for (const spr of this.projectileSprites.values()) spr.destroy();
+    this.projectileSprites.clear();
+  }
+
   // ── Skeleton projectile visuals ────────────────────────────────────────────
 
   private showSkeletonProjectiles(s: GameState) {
     const skeletons = s.currentRoom.enemies.filter(e => e.name === 'Skeleton' && e.isAlive);
-
-    let bossSp: EnemySprite | undefined;
-    for (const [id, sp] of this.enemySprites) {
-      if (sp.sprite && !sp.dead) {
-        const bossEnemy = s.currentRoom.enemies.find(e => e.id === id && e.isAlive);
-        if (bossEnemy) { bossSp = sp; break; }
-      }
-    }
+    if (!skeletons.length) return;
 
     for (const player of s.players) {
       const prevHp = this.prevPlayerHp.get(player.userId) ?? player.currentHp;
@@ -1070,20 +1160,6 @@ export class GameScene extends Phaser.Scene {
         if (sdx * sdx + sdy * sdy > 260 * 260) continue;
         const proj = this.add.arc(sk.x, sk.y, 5, 0, 360, false, 0xbdc3c7, 0.9).setDepth(15);
         this.tweens.add({ targets: proj, x: targetX, y: targetY, duration: 280, onComplete: () => proj.destroy() });
-      }
-
-      if (bossSp?.sprite) {
-        const locked = bossSp.animKey === 'boss-take-hit' || bossSp.animKey === 'boss-death' || bossSp.animKey === 'boss-attack';
-        if (!locked) {
-          bossSp.animKey = 'boss-attack';
-          bossSp.sprite.play('boss-attack');
-          bossSp.sprite.once('animationcomplete', () => {
-            if (bossSp!.animKey === 'boss-attack') {
-              bossSp!.animKey = 'boss-idle';
-              bossSp!.sprite?.play('boss-idle');
-            }
-          });
-        }
       }
     }
   }
