@@ -320,10 +320,14 @@ public class GameService
             float dy   = target.Y - inst.Y;
             float dist = MathF.Sqrt(dx * dx + dy * dy);
 
-            // Boss stops at melee range; ranged enemies stop at their shoot range; others at 30 px.
-            float stopDist = inst.Enemy is BossEnemy ? RoomBounds.BossStopDistance
-                : inst.Enemy.ShootsProjectiles ? inst.Enemy.ProjectileRange - 30f
-                : 30f;
+            // Golem freezes in place during laser charge — it is winding up, not chasing.
+            if (inst.Enemy is GolemEnemy && inst.GolemIsCharging) continue;
+
+            // Boss/Golem stop at their melee stop distance; ranged enemies stop at shoot range; others at 30 px.
+            float stopDist = inst.Enemy is BossEnemy  ? RoomBounds.BossStopDistance
+                           : inst.Enemy is GolemEnemy ? RoomBounds.GolemStopDistance
+                           : inst.Enemy.ShootsProjectiles ? inst.Enemy.ProjectileRange - 30f
+                           : 30f;
             if (dist < stopDist) continue;
 
             // Normalise the direction vector (dx/dist, dy/dist) so diagonal
@@ -347,13 +351,18 @@ public class GameService
 
         bool globalReady = now - session.LastEnemyTick >= TimeSpan.FromMilliseconds(800);
 
-        // Allow the method to run outside the global tick if the boss has a
-        // ranged shot ready — melee and ranged run on independent cooldowns.
+        // Allow the method to run outside the global tick if the boss or Golem has a
+        // ranged shot ready — melee and ranged attacks run on independent cooldowns.
         bool bossRangedReady = session.CurrentRoom.Enemies.Any(e =>
             e.Enemy is BossEnemy && e.Enemy.IsAlive &&
             (now - e.LastRangedAttackTime).TotalMilliseconds >= RoomBounds.BossRangedCooldownMs);
 
-        if (!globalReady && !bossRangedReady) return [];
+        // Same check for the Golem — its 2 000 ms cooldown is tracked per-instance.
+        bool golemRangedReady = session.CurrentRoom.Enemies.Any(e =>
+            e.Enemy is GolemEnemy && e.Enemy.IsAlive &&
+            (now - e.LastRangedAttackTime).TotalMilliseconds >= RoomBounds.GolemRangedCooldownMs);
+
+        if (!globalReady && !bossRangedReady && !golemRangedReady) return [];
 
         if (globalReady)
         {
@@ -388,10 +397,32 @@ public class GameService
                     // the player is standing RIGHT NOW. Moving after the shot is fired dodges it.
                     inst.LastRangedAttackTime = now;
                     session.ActiveProjectiles.Add(
-                        new ActiveProjectile(inst.X, inst.Y, target.X, target.Y, inst.Enemy.Attack));
+                        new ActiveProjectile(inst.X, inst.Y, target.X, target.Y, inst.Enemy.Attack, "Dark Mage's fireball"));
                     log.Add($"Dark Mage fires a fireball at {target.Username}!");
                 }
                 // else: player is beyond BossRangedMax — boss chases, no attack.
+            }
+            else if (inst.Enemy is GolemEnemy)
+            {
+                // Golem is charging its laser — suppress all normal attacks during wind-up.
+                // Damage will come from TickGolemLaserCharge instead.
+                if (inst.GolemIsCharging) { /* winding up — no normal attacks */ }
+                else if (dist <= RoomBounds.GolemMeleeRange && globalReady)
+                {
+                    // Player is in melee range — stone-fist smash on the global 800 ms tick.
+                    log.AddRange(ApplyHit(inst.Enemy.Attack, inst.Enemy.Name, target, session, alive));
+                }
+                else if (dist > RoomBounds.GolemMeleeRange && dist <= RoomBounds.GolemRangedMax &&
+                         (now - inst.LastRangedAttackTime).TotalMilliseconds >= RoomBounds.GolemRangedCooldownMs)
+                {
+                    // Player is at mid range — hurl a glowing arm projectile toward the player's
+                    // current position. Moving out of the way after it is fired will dodge the hit.
+                    inst.LastRangedAttackTime = now;
+                    session.ActiveProjectiles.Add(
+                        new ActiveProjectile(inst.X, inst.Y, target.X, target.Y, inst.Enemy.Attack, "Golem's projectile"));
+                    log.Add($"Golem hurls a projectile at {target.Username}!");
+                }
+                // else: player is beyond GolemRangedMax — Golem chases, no attack.
             }
             else if (globalReady)
             {
@@ -404,6 +435,117 @@ public class GameService
             }
 
             if (session.IsGameOver) break;
+        }
+
+        return log;
+    }
+
+    // Handles the Golem's laser charge ability.
+    //
+    // Called every 100 ms tick alongside MoveEnemies and TickEnemyAttacks.
+    // Three HP thresholds (75 %, 50 %, 25 %) each trigger one laser charge:
+    //   1. Golem freezes and gains GolemLaserDefenseBonus defence for 2 s.
+    //   2. After 2 s the laser fires — all alive players take heavy damage.
+    //   3. Defence returns to its pre-charge value.
+    //
+    // The method also clears the GolemLaserFiredTime flag once the
+    // GolemLaserFiringVisualMs window has elapsed so the frontend stops
+    // showing the beam animation.
+    public List<string> TickGolemLaserCharge(GameSession session)
+    {
+        var log = new List<string>();
+        var now = DateTime.UtcNow;
+
+        foreach (var inst in session.CurrentRoom.Enemies
+            .Where(e => e.Enemy is GolemEnemy && e.Enemy.IsAlive))
+        {
+            var golem = (GolemEnemy)inst.Enemy;
+
+            // ── Clear the firing visual window once it has expired ──────────────
+            if (inst.GolemLaserFiredTime.HasValue &&
+                (now - inst.GolemLaserFiredTime.Value).TotalMilliseconds >= RoomBounds.GolemLaserFiringVisualMs)
+            {
+                inst.GolemLaserFiredTime = null;
+            }
+
+            // ── Check HP thresholds — start a new charge if one is crossed ──────
+            if (!inst.GolemIsCharging)
+            {
+                float hpPct = (float)golem.Health / golem.MaxHealth * 100f;
+                // Thresholds in descending order so 75 % fires before 50 % if both
+                // happen simultaneously (e.g. a large burst of damage).
+                foreach (int threshold in new[] { 75, 50, 25 })
+                {
+                    if (hpPct <= threshold && !inst.GolemLaserThresholdsUsed.Contains(threshold))
+                    {
+                        inst.GolemLaserThresholdsUsed.Add(threshold);
+                        inst.GolemChargeStartTime = now;
+                        golem.BeginLaserCharge();   // raises defence for the wind-up window
+
+                        // Lock in the beam direction toward the nearest alive player.
+                        // Direction stays fixed for the whole 2 s wind-up — moving out of
+                        // the corridor before the shot fires will avoid the damage.
+                        var nearest = session.Players
+                            .Where(p => p.Hero.IsAlive)
+                            .MinBy(p => Dist(p.X, p.Y, inst.X, inst.Y));
+                        if (nearest is not null)
+                        {
+                            float ldx = nearest.X - inst.X;
+                            float ldy = nearest.Y - inst.Y;
+                            float llen = MathF.Sqrt(ldx * ldx + ldy * ldy);
+                            inst.GolemLaserDirX = llen > 0.001f ? ldx / llen : 1f;
+                            inst.GolemLaserDirY = llen > 0.001f ? ldy / llen : 0f;
+                        }
+
+                        log.Add($"Golem begins charging its laser ({threshold}% HP threshold)!");
+                        break;  // only one threshold per tick — next tick handles the next one
+                    }
+                }
+            }
+
+            // ── If charging, fire when the full charge duration has elapsed ──────
+            if (inst.GolemIsCharging && inst.GolemChargeStartTime.HasValue)
+            {
+                double elapsed = (now - inst.GolemChargeStartTime.Value).TotalMilliseconds;
+                if (elapsed >= RoomBounds.GolemChargeDurationMs)
+                {
+                    // ── Laser fires — damage only players inside the beam corridor ──────
+                    inst.GolemChargeStartTime = null;  // no longer charging
+                    inst.GolemLaserFiredTime  = now;   // start the beam visual window
+                    golem.EndLaserCharge();            // restore pre-charge defence
+
+                    int laserDmg = (int)(golem.Attack * RoomBounds.GolemLaserDamageMultiplier);
+                    var alive    = session.Players.Where(p => p.Hero.IsAlive).ToList();
+                    log.Add("Golem unleashes its laser beam!");
+
+                    // Only players inside the beam corridor are hit.
+                    // The corridor is defined by:
+                    //   • In front of the Golem (dot product > 0 with LaserDir)
+                    //   • Within GolemLaserRange px along the beam axis
+                    //   • Within ±GolemLaserWidth px perpendicular to the beam axis
+                    // Backing out of the line or sidestepping > 80 px avoids all damage.
+                    foreach (var player in alive.ToList())
+                    {
+                        float pdx  = player.X - inst.X;
+                        float pdy  = player.Y - inst.Y;
+                        float dot  = pdx * inst.GolemLaserDirX + pdy * inst.GolemLaserDirY;
+
+                        // Player is behind the Golem or too far away → not hit.
+                        if (dot < 0f || dot > RoomBounds.GolemLaserRange) continue;
+
+                        // Perpendicular distance from the beam centre line.
+                        float perpX = pdx - inst.GolemLaserDirX * dot;
+                        float perpY = pdy - inst.GolemLaserDirY * dot;
+                        float perp  = MathF.Sqrt(perpX * perpX + perpY * perpY);
+
+                        // Player sidestepped out of the corridor → not hit.
+                        if (perp > RoomBounds.GolemLaserWidth) continue;
+
+                        log.AddRange(ApplyHit(laserDmg, "Golem's laser", player, session, alive));
+                        if (session.IsGameOver) break;
+                    }
+                }
+            }
         }
 
         return log;
@@ -453,7 +595,8 @@ public class GameService
                 if (dist > ActiveProjectile.HitRadius) continue;  // missed this player
 
                 // Hit! Apply damage and remove the fireball — it can only hit once.
-                log.AddRange(ApplyHit(proj.Damage, "Dark Mage's fireball", player, session, alivePlayers));
+                // The attacker name covers both boss fireball and Golem arm projectile.
+                log.AddRange(ApplyHit(proj.Damage, proj.AttackerName, player, session, alivePlayers));
                 session.ActiveProjectiles.Remove(proj);
                 hitSomeone = true;
                 break;
@@ -507,16 +650,38 @@ public class GameService
     {
         var room = session.CurrentRoom;
 
+        var now = DateTime.UtcNow;
         var roomDto = new RoomDto(
             room.Type.ToString(),
-            room.Enemies.Select(e => new EnemyDto(
-                e.Id.ToString(),
-                e.Enemy.Name,
-                e.Enemy.Health,
-                e.Enemy.MaxHealth,
-                e.Enemy.IsAlive,
-                e.X, e.Y           // position so the Phaser scene can place the sprite
-            )).ToList(),
+            room.Enemies.Select(e =>
+            {
+                // Calculate charge progress (0–1) so the frontend can render the charge bar.
+                float chargePercent = 0f;
+                bool  isLaserFiring = false;
+                float laserDirX = 0f, laserDirY = 0f;
+                if (e.Enemy is GolemEnemy)
+                {
+                    if (e.GolemIsCharging && e.GolemChargeStartTime.HasValue)
+                        chargePercent = Math.Clamp(
+                            (float)(now - e.GolemChargeStartTime.Value).TotalMilliseconds
+                            / RoomBounds.GolemChargeDurationMs, 0f, 1f);
+
+                    if (e.GolemLaserFiredTime.HasValue &&
+                        (now - e.GolemLaserFiredTime.Value).TotalMilliseconds < RoomBounds.GolemLaserFiringVisualMs)
+                        isLaserFiring = true;
+
+                    // Always include the aim direction so the frontend can rotate the beam sprite.
+                    laserDirX = e.GolemLaserDirX;
+                    laserDirY = e.GolemLaserDirY;
+                }
+                return new EnemyDto(
+                    e.Id.ToString(), e.Enemy.Name,
+                    e.Enemy.Health, e.Enemy.MaxHealth, e.Enemy.IsAlive,
+                    e.X, e.Y,
+                    chargePercent, isLaserFiring,
+                    laserDirX, laserDirY
+                );
+            }).ToList(),
             room.IsCleared
         );
 

@@ -30,6 +30,16 @@ export interface EnemyState {
   isAlive: boolean;
   x: number;
   y: number;
+
+  // Golem laser charge fields — 0 / false for all other enemies.
+  // chargePercent: 0 = idle, 0–1 = fraction of the 2 s charge elapsed (shown as a bar).
+  // isLaserFiring: true for ~700 ms after the beam fires (triggers the beam animation).
+  // laserDirX/Y: normalised unit vector locked in at charge start toward the player.
+  //              The frontend rotates beam/charge sprites using Math.atan2(laserDirY, laserDirX).
+  chargePercent: number;
+  isLaserFiring: boolean;
+  laserDirX: number;
+  laserDirY: number;
 }
 
 export interface RoomState {

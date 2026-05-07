@@ -67,10 +67,18 @@ public class EnemyAiService : BackgroundService
                     if (anyAliveEnemies)
                     {
                         // Step 1: slide every enemy toward the nearest player.
+                        // The Golem is frozen inside this call while it is charging its laser.
                         _game.MoveEnemies(session, deltaMs);
 
-                        // Step 2: decide whether any enemy attacks this tick and apply damage.
+                        // Step 2: Golem laser charge — check HP thresholds, advance charge timer,
+                        // and fire when the 2 s wind-up completes. Runs before regular attacks so
+                        // the laser can interrupt normal melee/ranged on the tick it fires.
+                        var laserLog = _game.TickGolemLaserCharge(session);
+                        session.AddLogRange(laserLog);
+
+                        // Step 3: decide whether any enemy attacks this tick and apply damage.
                         // The boss may also spawn a new fireball here (ranged shot on its own cooldown).
+                        // The Golem skips normal attacks while it is charging (handled inside).
                         var attackLog = _game.TickEnemyAttacks(session);
                         session.AddLogRange(attackLog);
                     }

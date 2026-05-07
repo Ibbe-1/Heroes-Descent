@@ -26,6 +26,29 @@ public class EnemyInstance
     // LastEnemyTick so melee and ranged attacks run on independent cooldowns.
     public DateTime LastRangedAttackTime { get; set; } = DateTime.MinValue;
 
+    // ── Golem laser charge state ──────────────────────────────────────────────
+    // Only meaningful when Enemy is GolemEnemy; ignored for all other types.
+
+    // Records which HP percentage thresholds (75, 50, 25) have already triggered
+    // a laser charge. Each threshold fires at most once per Golem encounter.
+    public HashSet<int> GolemLaserThresholdsUsed { get; } = [];
+
+    // Set to the current time when the Golem starts charging; null when idle or after firing.
+    public DateTime? GolemChargeStartTime { get; set; } = null;
+
+    // Set to the current time when the laser fires; cleared after GolemLaserFiringVisualMs.
+    // The frontend reads this window to play the beam animation.
+    public DateTime? GolemLaserFiredTime { get; set; } = null;
+
+    // True while the Golem is winding up its laser shot.
+    public bool GolemIsCharging => GolemChargeStartTime.HasValue;
+
+    // Normalised direction the laser will travel — set toward the nearest player at
+    // the moment the charge begins and kept fixed until the shot fires.
+    // The frontend rotates the beam sprite using atan2(LaserDirY, LaserDirX).
+    public float GolemLaserDirX { get; set; } = 1f;
+    public float GolemLaserDirY { get; set; } = 0f;
+
     public EnemyInstance(Enemy enemy, float x = 480f, float y = 320f)
     {
         Enemy = enemy;

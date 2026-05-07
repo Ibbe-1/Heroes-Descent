@@ -40,14 +40,22 @@ public record RoomDto(
 // One enemy in the current room.
 // X and Y are pixel coordinates in the same space the Phaser scene uses,
 // so the frontend can place the enemy sprite exactly where the server says it is.
+//
+// ChargePercent and IsLaserFiring are only non-default for the Golem:
+//   ChargePercent: 0 = idle, 0.0–1.0 = fraction of 2 s charge elapsed (shown as a bar)
+//   IsLaserFiring: true for ~700 ms after the laser fires (triggers the beam animation)
 public record EnemyDto(
-    string Id,          // Guid as string — matched to sprites in the Phaser scene
+    string Id,           // Guid as string — matched to sprites in the Phaser scene
     string Name,
     int    Health,
     int    MaxHealth,
     bool   IsAlive,
-    float  X,           // server-authoritative position
-    float  Y
+    float  X,            // server-authoritative position
+    float  Y,
+    float  ChargePercent,   // 0 when idle; 0–1 during Golem laser wind-up
+    bool   IsLaserFiring,   // true for ~700 ms after Golem laser beam fires
+    float  LaserDirX,       // normalised beam direction set at charge start (0 for non-Golem)
+    float  LaserDirY        // the frontend rotates the beam sprite using atan2(LaserDirY, LaserDirX)
 );
 
 // One player in the session.
