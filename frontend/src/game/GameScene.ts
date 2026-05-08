@@ -3,9 +3,9 @@ import type { GameState, EnemyState, PlayerState, ActiveProjectile } from '../ty
 import type { GameEngine } from './gameEngine';
 import { REGION_W, REGION_H } from './MapRegionManager';
 
-const ATTACK_RANGE = 120;
-const CLASS_RANGE: Record<string, number> = { Warrior: 120, Archer: 600, Wizard: 800 };
-const HIT_RADIUS: Record<string, number> = { Archer: 16, Wizard: 28 };
+const ATTACK_RANGE = 150;
+const CLASS_RANGE: Record<string, number> = { Warrior: 150, Archer: 600, Wizard: 800 };
+const HIT_RADIUS: Record<string, number> = { Archer: 32, Wizard: 52 };
 
 // Scale chosen so each class renders at roughly 70 px tall on the 960×640 viewport.
 const CLASS_SCALE: Record<string, number> = {
@@ -86,6 +86,7 @@ export class GameScene extends Phaser.Scene {
   private levelHeight = REGION_H;
   private readonly SPEED = 220;
   private lastPosSent   = 0;
+  private lastAttackTime = 0;
 
   private mySprite!: Phaser.GameObjects.Sprite;
   private myLabel!:  Phaser.GameObjects.Text;
@@ -518,6 +519,11 @@ export class GameScene extends Phaser.Scene {
     if (!this.engine || !this.state || !this.myHeroClass) return;
 
     if (Phaser.Input.Keyboard.JustDown(this.kSpace)) {
+      const me = this.state.players.find(p => p.userId === this.myUserId);
+      const cooldownMs = me?.attackCooldownMs ?? 2000;
+      const now = Date.now();
+      if (now - this.lastAttackTime < cooldownMs) return;
+
       const ptr = this.input.activePointer;
       const dx = ptr.worldX - this.localX;
       const dy = ptr.worldY - this.localY;
@@ -526,10 +532,12 @@ export class GameScene extends Phaser.Scene {
       const ny = dist > 0 ? dy / dist : -1;
 
       if (this.myHeroClass === 'Warrior') {
+        this.lastAttackTime = now;
         this.engine.attackNearest();
         this.flashAttack(nx, ny, ATTACK_RANGE);
       } else if (dist > 0) {
         const maxRange = CLASS_RANGE[this.myHeroClass] ?? ATTACK_RANGE;
+        this.lastAttackTime = now;
         this.engine.attackDirectional(nx, ny);
         this.flashAttack(nx, ny, Math.min(dist, maxRange));
       }

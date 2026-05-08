@@ -19,17 +19,17 @@ public static class RoomBounds
     public const float CenterY = (Top + Bottom) / 2f;    // 450
 
     // Warrior melee cone range
-    public const float PlayerAttackRange    = 120f;  // kept for AttackNearest compat
-    public const float WarriorAttackRange   = 120f;
+    public const float PlayerAttackRange    = 150f;  // kept for AttackNearest compat
+    public const float WarriorAttackRange   = 150f;
     public const float WarriorConeHalfAngle = MathF.PI / 4f;  // ±45° = 90° total cone
 
     // Archer arrow range and hit-box radius (how close ray must pass to enemy centre)
     public const float ArcherAttackRange = 600f;
-    public const float ArcherHitRadius   = 16f;
+    public const float ArcherHitRadius   = 32f;
 
     // Wizard bolt range and hit-box radius (larger — easier to land but slower)
     public const float WizardAttackRange  = 800f;
-    public const float WizardHitRadius    = 28f;
+    public const float WizardHitRadius    = 52f;
     // Radius around the fireball's primary impact point that receives splash damage
     public const float WizardSplashRadius = 80f;
 
