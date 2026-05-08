@@ -69,6 +69,21 @@ public static class RoomBounds
     public const float GolemLaserRange = 500f; // maximum beam length in pixels
     public const float GolemLaserWidth = 80f;  // half-width of the hit corridor (±80 px off center)
 
+    // Dark Mage flame wave constants
+    // Volleys rotate through three patterns every BossFlameWaveCooldownMs milliseconds:
+    //   Pattern 0 — horizontal sweep : 3 vertical bands at FlameWaveYPositions, sweep L/R
+    //   Pattern 1 — vertical rain    : 3 horizontal bands at FlameWaveXPositions, sweep U/D
+    //   Pattern 2 — cross-fire       : 2 horizontal + 2 vertical at once, safe corners only
+    public const float BossFlameWaveCooldownMs = 7000f;
+    public const float FlameWaveHalfHeight     = 38f;
+    // Y centres for the three horizontal-sweep bands (pattern 0).
+    public static readonly float[] FlameWaveYPositions = { 240f, 450f, 660f };
+    // X centres for the three vertical-rain columns (pattern 1).
+    public static readonly float[] FlameWaveXPositions = { 300f, 640f, 980f };
+    // Reduced set for cross-fire (pattern 2) — 2 of each leaves safe corners.
+    public static readonly float[] FlameWaveCrossYPositions = { 280f, 620f };
+    public static readonly float[] FlameWaveCrossXPositions = { 380f, 900f };
+
     // Enemies won't spawn within this radius of the room centre,
     // giving the party a safe landing zone at the start of each room
     public const float EnemyMinSpawnDist = 200f;

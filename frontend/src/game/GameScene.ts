@@ -99,6 +99,10 @@ export class GameScene extends Phaser.Scene {
   // destroyed (with an impact burst) when the ID disappears.
   private projectileSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
 
+  // One Graphics object per active flame wave from the Dark Mage boss.
+  // Drawn as a glowing vertical fire band; updated each server tick.
+  private flameWaveGraphics: Map<string, Phaser.GameObjects.Graphics> = new Map();
+
   private myHeroClass    = '';
   private prevPlayerHp:  Map<string, number> = new Map();
   private prevMyHp       = -1;
@@ -563,7 +567,8 @@ export class GameScene extends Phaser.Scene {
     if (s.currentRoomIndex !== this.lastRoomIndex) {
       this.lastRoomIndex = s.currentRoomIndex;
       this.clearEnemies();
-      this.clearProjectiles();  // discard any fireballs still in flight from the previous room
+      this.clearProjectiles();   // discard any fireballs still in flight from the previous room
+      this.clearFlameWaves();    // discard any flame waves from the previous room
       this.clearRoomVisuals();
       this.renderBackground(this.backgroundKeyForRoom(s.currentRoomIndex, s.currentRoom.type));
       this.showRoomBanner(s.currentRoomIndex, s.currentRoom.type);
@@ -573,6 +578,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.showEnemyAttacks(s);
+    this.showFlameWaves(s);
     this.state = s;
 
     if (this.myUserId) this.destroyOther(this.myUserId);
@@ -1462,6 +1468,69 @@ export class GameScene extends Phaser.Scene {
   private clearProjectiles() {
     for (const spr of this.projectileSprites.values()) spr.destroy();
     this.projectileSprites.clear();
+  }
+
+  // ── Flame wave rendering ───────────────────────────────────────────────────
+
+  private showFlameWaves(s: GameState) {
+    const incoming = new Set((s.activeFlameWaves ?? []).map(w => w.id));
+
+    // Remove Graphics objects for waves that have left the room or been cleared.
+    for (const [id, g] of this.flameWaveGraphics) {
+      if (!incoming.has(id)) {
+        g.destroy();
+        this.flameWaveGraphics.delete(id);
+      }
+    }
+
+    for (const w of s.activeFlameWaves ?? []) {
+      const hh = w.halfHeight;
+      const existing = this.flameWaveGraphics.get(w.id);
+
+      if (!existing) {
+        const g = this.add.graphics().setDepth(13);
+        const isVertical = Math.abs(w.dirY ?? 0) > 0.5;
+
+        if (isVertical) {
+          // Horizontal band for a vertically-travelling wave.
+          // Outer glow — wide, translucent deep purple.
+          g.fillStyle(0x7d3c98, 0.22);
+          g.fillRect(-(hh + 14), -24, (hh + 14) * 2, 48);
+          // Main flame band — vivid purple.
+          g.fillStyle(0x8e44ad, 0.82);
+          g.fillRect(-hh, -10, hh * 2, 20);
+          // Bright inner core — pale lavender.
+          g.fillStyle(0xd7bde2, 0.95);
+          g.fillRect(-(hh - 10), -4, (hh - 10) * 2, 8);
+        } else {
+          // Vertical band for a horizontally-travelling wave.
+          // Outer glow — tall, translucent deep purple.
+          g.fillStyle(0x7d3c98, 0.22);
+          g.fillRect(-24, -(hh + 14), 48, (hh + 14) * 2);
+          // Main flame band — vivid purple.
+          g.fillStyle(0x8e44ad, 0.82);
+          g.fillRect(-10, -hh, 20, hh * 2);
+          // Bright inner core — pale lavender.
+          g.fillStyle(0xd7bde2, 0.95);
+          g.fillRect(-4, -(hh - 10), 8, (hh - 10) * 2);
+        }
+
+        g.setPosition(w.x, w.y);
+        this.flameWaveGraphics.set(w.id, g);
+      } else {
+        // Server moves waves ~20 px per 100 ms tick — tween for smooth motion.
+        if (Math.abs(w.dirY ?? 0) > 0.5) {
+          this.tweens.add({ targets: existing, y: w.y, duration: 100, ease: 'Linear' });
+        } else {
+          this.tweens.add({ targets: existing, x: w.x, duration: 100, ease: 'Linear' });
+        }
+      }
+    }
+  }
+
+  private clearFlameWaves() {
+    for (const g of this.flameWaveGraphics.values()) g.destroy();
+    this.flameWaveGraphics.clear();
   }
 
   // ── Enemy attack visuals ───────────────────────────────────────────────────

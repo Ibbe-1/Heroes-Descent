@@ -202,6 +202,7 @@ public class GameHub : Hub
             if (!session.CurrentRoom.IsCleared) return;
 
             session.CurrentRoomIndex++;
+            session.ActiveFlameWaves.Clear();   // discard any waves still in flight
 
             // Teleport all players back to their spawn positions for the new room.
             for (int i = 0; i < session.Players.Count; i++)
