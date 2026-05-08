@@ -1020,6 +1020,15 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    // Floating damage number — shown whenever the enemy takes a hit this tick.
+    if (e.health < sp.prevHp) {
+      const dmg = sp.prevHp - e.health;
+      const nx = sp.sprite?.x ?? sp.body?.x ?? e.x;
+      const ny = sp.sprite?.y ?? sp.body?.y ?? e.y;
+      const big = dmg >= 20;
+      this.spawnFloatingNumber(nx, ny, `${dmg}`, '#ffee44', big ? 18 : 14);
+    }
+
     sp.prevX  = e.x;
     sp.prevY  = e.y;
     sp.prevHp = e.health;
@@ -1470,6 +1479,30 @@ export class GameScene extends Phaser.Scene {
     this.projectileSprites.clear();
   }
 
+  // ── Floating combat numbers ────────────────────────────────────────────────
+
+  // Spawns a number that floats upward and fades out over ~1 second.
+  // color '#ffee44' for damage dealt to enemies, '#ff4444' for damage taken by players.
+  private spawnFloatingNumber(x: number, y: number, label: string, color: string, fontSize = 15) {
+    const jitter = Phaser.Math.Between(-10, 10);
+    const t = this.add.text(x + jitter, y - 20, label, {
+      fontFamily: 'Courier New, monospace',
+      fontSize: `${fontSize}px`,
+      color,
+      stroke: '#000000',
+      strokeThickness: 3,
+    }).setOrigin(0.5, 1).setDepth(20);
+
+    this.tweens.add({
+      targets: t,
+      y: y - 80,
+      alpha: 0,
+      duration: 950,
+      ease: 'Cubic.Out',
+      onComplete: () => t.destroy(),
+    });
+  }
+
   // ── Flame wave rendering ───────────────────────────────────────────────────
 
   private showFlameWaves(s: GameState) {
@@ -1558,6 +1591,9 @@ export class GameScene extends Phaser.Scene {
       const targetY = player.userId === this.myUserId
         ? this.localY
         : (this.others.get(player.userId)?.sprite.y ?? player.y);
+
+      // Floating red damage number above the player who was hit.
+      this.spawnFloatingNumber(targetX, targetY, `-${prevHp - player.currentHp}`, '#ff4444', 14);
 
       // Skeleton: play attack anim on the skeleton's sprite, then launch a spinning sword projectile.
       for (const sk of skeletons) {
