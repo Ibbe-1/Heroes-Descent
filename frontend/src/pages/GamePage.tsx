@@ -114,6 +114,9 @@ export default function GamePage({ username, userId, onBack }: Props) {
   // a new GameStateUpdate message. React re-renders the HUD with the new data,
   // and a separate useEffect forwards the state into the Phaser scene.
   const [gameState, setGameState]     = useState<GameState | null>(null);
+  // When isVictory first becomes true the overlay appears. "Continue Roaming"
+  // dismisses it so players can explore the Exit Hall before leaving.
+  const [showVictoryOverlay, setShowVictoryOverlay] = useState(true);
 
   // Refs hold the Phaser game instance and the SignalR engine so they persist
   // across re-renders without triggering extra effects.
@@ -179,6 +182,12 @@ export default function GamePage({ username, userId, onBack }: Props) {
       gameRef.current.events.emit('stateUpdate', gameState);
     }
   }, [gameState]);
+
+  // Re-show the victory overlay each time victory is first achieved
+  // (handles the case where a player rejoins a won session).
+  useEffect(() => {
+    if (gameState?.isVictory) setShowVictoryOverlay(true);
+  }, [gameState?.isVictory]);
 
   // Disconnect SignalR when the component is removed from the React tree.
   useEffect(() => () => { engineRef.current?.disconnect(); }, []);
@@ -275,7 +284,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
         {/* Phaser canvas mounts here. flex: 1 lets it expand to fill the space between
             the top and bottom bars. minHeight: 0 prevents flexbox overflow. */}
         <div ref={containerRef} style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-          {isWin && (
+          {isWin && showVictoryOverlay && (
             <div style={{
               position: 'absolute', inset: 0, zIndex: 20,
               background: 'rgba(7,7,13,0.88)',
@@ -302,14 +311,24 @@ export default function GamePage({ username, userId, onBack }: Props) {
                   </div>
                 ))}
               </div>
-              <button onClick={handleLeave} style={{
-                background: 'rgba(201,168,76,0.12)', border: `1px solid ${GOLD}`,
-                color: GOLD, fontFamily: F, fontSize: '0.75rem',
-                letterSpacing: '0.15em', textTransform: 'uppercase',
-                padding: '0.6rem 1.8rem', cursor: 'pointer',
-              }}>
-                Claim Rewards &amp; Return Home
-              </button>
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button onClick={() => setShowVictoryOverlay(false)} style={{
+                  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.22)',
+                  color: WHITE, fontFamily: F, fontSize: '0.75rem',
+                  letterSpacing: '0.12em', textTransform: 'uppercase',
+                  padding: '0.6rem 1.4rem', cursor: 'pointer',
+                }}>
+                  Continue Roaming
+                </button>
+                <button onClick={handleLeave} style={{
+                  background: 'rgba(201,168,76,0.12)', border: `1px solid ${GOLD}`,
+                  color: GOLD, fontFamily: F, fontSize: '0.75rem',
+                  letterSpacing: '0.15em', textTransform: 'uppercase',
+                  padding: '0.6rem 1.8rem', cursor: 'pointer',
+                }}>
+                  Claim Rewards &amp; Return Home
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -363,6 +382,9 @@ export default function GamePage({ username, userId, onBack }: Props) {
                   <span style={{ color: RED, fontSize: 12, letterSpacing: '0.1em' }}>☠ DEFEATED</span>
                   <button onClick={handleLeave} style={advBtn(RED)}>Return Home</button>
                 </div>
+              )}
+              {isWin && !showVictoryOverlay && (
+                <button onClick={handleLeave} style={advBtn(GOLD)}>Return Home</button>
               )}
               {!isWin && !isOver && cleared && (
                 <button onClick={() => engineRef.current?.moveToNextRoom()} style={advBtn('#27ae60')}>
