@@ -1,3 +1,3 @@
 namespace Heroes_Descent.Core.GameState;
 
-public enum RoomType { Normal, Elite, Boss, TreasureChest }
+public enum RoomType { Normal, Elite, Boss, TreasureChest, ExitHall }

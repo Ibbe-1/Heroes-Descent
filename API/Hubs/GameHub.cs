@@ -201,28 +201,29 @@ public class GameHub : Hub
         {
             if (!session.CurrentRoom.IsCleared) return;
 
-            if (session.CurrentRoomIndex >= session.Rooms.Count - 1)
+            session.CurrentRoomIndex++;
+
+            // Teleport all players back to their spawn positions for the new room.
+            for (int i = 0; i < session.Players.Count; i++)
             {
-                // Last room cleared — the party wins.
+                var (sx, sy) = GameSession.GetSpawn(i);
+                session.Players[i].X = sx;
+                session.Players[i].Y = sy;
+            }
+
+            var room = session.CurrentRoom;
+
+            if (room.Type == RoomType.ExitHall)
+            {
+                // Entering the Exit Hall after defeating the boss — victory is achieved.
                 session.IsVictory = true;
                 session.AddLog("» VICTORY — the dungeon is conquered!");
             }
             else
             {
-                session.CurrentRoomIndex++;
-
                 // Delay first enemy attack by 2 seconds so players aren't instantly hit.
                 session.LastEnemyTick = DateTime.UtcNow.AddSeconds(2);
 
-                // Teleport all players back to their spawn positions for the new room.
-                for (int i = 0; i < session.Players.Count; i++)
-                {
-                    var (sx, sy) = GameSession.GetSpawn(i);
-                    session.Players[i].X = sx;
-                    session.Players[i].Y = sy;
-                }
-
-                var room = session.CurrentRoom;
                 session.AddLog($"» Room {session.CurrentRoomIndex + 1}/{session.Rooms.Count} — {room.Type}");
 
                 if (room.Type == RoomType.TreasureChest && !room.ChestOpened)

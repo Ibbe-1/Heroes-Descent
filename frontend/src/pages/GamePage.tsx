@@ -262,7 +262,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
               <>
                 {/* Color-coded room type label */}
                 <span style={{ color: room?.type === 'Boss' ? RED : room?.type === 'Elite' ? '#f39c12' : GOLD }}>
-                  {room?.type === 'Boss' ? '☠ BOSS' : room?.type === 'Elite' ? '★ ELITE' : '○ NORMAL'}
+                  {room?.type === 'Boss' ? '☠ BOSS' : room?.type === 'Elite' ? '★ ELITE' : room?.type === 'ExitHall' ? '✦ EXIT HALL' : '○ NORMAL'}
                 </span>
                 <span style={{ color: GRAY, marginLeft: 8 }}>Room {(state.currentRoomIndex + 1)}/{state.totalRooms}</span>
               </>
@@ -274,7 +274,45 @@ export default function GamePage({ username, userId, onBack }: Props) {
 
         {/* Phaser canvas mounts here. flex: 1 lets it expand to fill the space between
             the top and bottom bars. minHeight: 0 prevents flexbox overflow. */}
-        <div ref={containerRef} style={{ flex: 1, position: 'relative', minHeight: 0 }} />
+        <div ref={containerRef} style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+          {isWin && (
+            <div style={{
+              position: 'absolute', inset: 0, zIndex: 20,
+              background: 'rgba(7,7,13,0.88)',
+              display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center',
+              gap: '1.5rem', fontFamily: F,
+            }}>
+              <div style={{ fontSize: '2.2rem', color: GOLD, letterSpacing: '0.22em' }}>★ VICTORY ★</div>
+              <p style={{ color: WHITE, fontSize: '0.8rem', letterSpacing: '0.1em', margin: 0 }}>
+                The dungeon has been conquered!
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', minWidth: 240 }}>
+                {state?.players.map(p => (
+                  <div key={p.userId} style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '6px 14px',
+                    background: p.userId === userId ? 'rgba(201,168,76,0.1)' : 'rgba(255,255,255,0.04)',
+                    border: `1px solid ${p.userId === userId ? GOLD_DIM : 'rgba(255,255,255,0.08)'}`,
+                  }}>
+                    <span style={{ color: p.userId === userId ? GOLD : WHITE, fontSize: '0.78rem', letterSpacing: '0.06em' }}>
+                      {p.username}
+                    </span>
+                    <span style={{ color: GOLD, fontSize: '0.78rem' }}>✦ {p.gold} gold</span>
+                  </div>
+                ))}
+              </div>
+              <button onClick={handleLeave} style={{
+                background: 'rgba(201,168,76,0.12)', border: `1px solid ${GOLD}`,
+                color: GOLD, fontFamily: F, fontSize: '0.75rem',
+                letterSpacing: '0.15em', textTransform: 'uppercase',
+                padding: '0.6rem 1.8rem', cursor: 'pointer',
+              }}>
+                Claim Rewards &amp; Return Home
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Bottom HUD overlay — lives above the canvas via zIndex. */}
         <div style={{ flexShrink: 0, background: 'rgba(0,0,0,0.75)', borderTop: `1px solid ${GOLD_DIM}`, padding: '6px 12px', zIndex: 10, fontFamily: F }}>
@@ -320,12 +358,6 @@ export default function GamePage({ username, userId, onBack }: Props) {
                   Next Room → shown when the current room is cleared but game isn't over
                   "X enemies remaining" → shown while the room is still active */}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-              {isWin && (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                  <span style={{ color: '#f1c40f', fontSize: 12, letterSpacing: '0.1em' }}>★ VICTORY ★</span>
-                  <button onClick={handleLeave} style={advBtn('#f1c40f')}>Return Home</button>
-                </div>
-              )}
               {isOver && (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
                   <span style={{ color: RED, fontSize: 12, letterSpacing: '0.1em' }}>☠ DEFEATED</span>
@@ -334,7 +366,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
               )}
               {!isWin && !isOver && cleared && (
                 <button onClick={() => engineRef.current?.moveToNextRoom()} style={advBtn('#27ae60')}>
-                  {state && state.currentRoomIndex >= state.totalRooms - 1 ? '★ Claim Victory' : '→ Next Room'}
+                  → Next Room
                 </button>
               )}
               {!isWin && !isOver && !cleared && room && (
