@@ -101,7 +101,7 @@ export class GameScene extends Phaser.Scene {
 
   // Treasure chest sprite — only present in TreasureChest rooms.
   private chestSprite: {
-    body: Phaser.GameObjects.Rectangle;
+    body: Phaser.GameObjects.Sprite;
     label: Phaser.GameObjects.Text;
     hint: Phaser.GameObjects.Text;
   } | null = null;
@@ -234,6 +234,18 @@ export class GameScene extends Phaser.Scene {
     this.load.spritesheet('mimic-attack-2',        '/assets/Mimic/attack_2.png',         { frameWidth: 146, frameHeight: 146 });
     this.load.spritesheet('mimic-hurt',            '/assets/Mimic/hurt.png',             { frameWidth: 146, frameHeight: 146 });
     this.load.spritesheet('mimic-death',           '/assets/Mimic/death.png',            { frameWidth: 146, frameHeight: 146 });
+
+    // Treasure chest — 40×32 frames, 6 cols × 8 rows; frame 0 = closed, frame 5 = open (dark wood, row 0)
+    this.load.spritesheet('chest-sheet', '/assets/TreasureChest/Chests.png', { frameWidth: 40, frameHeight: 32 });
+
+    // Mad King — treasure guardian, 160×111 frames
+    this.load.spritesheet('madking-idle',     '/assets/MadKing/Idle.png',     { frameWidth: 160, frameHeight: 111 });
+    this.load.spritesheet('madking-run',      '/assets/MadKing/Run.png',      { frameWidth: 160, frameHeight: 111 });
+    this.load.spritesheet('madking-attack1',  '/assets/MadKing/Attack1.png',  { frameWidth: 160, frameHeight: 111 });
+    this.load.spritesheet('madking-attack2',  '/assets/MadKing/Attack2.png',  { frameWidth: 160, frameHeight: 111 });
+    this.load.spritesheet('madking-attack3',  '/assets/MadKing/Attack3.png',  { frameWidth: 160, frameHeight: 111 });
+    this.load.spritesheet('madking-take-hit', '/assets/MadKing/Take Hit.png', { frameWidth: 160, frameHeight: 111 });
+    this.load.spritesheet('madking-death',    '/assets/MadKing/Death.png',    { frameWidth: 160, frameHeight: 111 });
   }
 
   // ── Phaser lifecycle: create ───────────────────────────────────────────────
@@ -251,6 +263,7 @@ export class GameScene extends Phaser.Scene {
     this.createSlimeAnims();
     this.createMushroomAnims();
     this.createMimicAnims();
+    this.createMadKingAnims();
 
     this.hpBars      = this.add.graphics().setDepth(20);
     this.aimGraphics = this.add.graphics().setDepth(6);
@@ -435,6 +448,17 @@ export class GameScene extends Phaser.Scene {
     a.create({ key: 'mimic-attack-2',         frames: a.generateFrameNumbers('mimic-attack-2',         { start: 0, end: 12 }), frameRate: 12, repeat: 0  });
     a.create({ key: 'mimic-hurt',             frames: a.generateFrameNumbers('mimic-hurt',             { start: 0, end: 2  }), frameRate: 10, repeat: 0  });
     a.create({ key: 'mimic-death',            frames: a.generateFrameNumbers('mimic-death',            { start: 0, end: 5  }), frameRate: 8,  repeat: 0  });
+  }
+
+  private createMadKingAnims() {
+    const a = this.anims;
+    a.create({ key: 'madking-idle',     frames: a.generateFrameNumbers('madking-idle',     { start: 0, end: 7 }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'madking-run',      frames: a.generateFrameNumbers('madking-run',      { start: 0, end: 7 }), frameRate: 10, repeat: -1 });
+    a.create({ key: 'madking-attack1',  frames: a.generateFrameNumbers('madking-attack1',  { start: 0, end: 3 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'madking-attack2',  frames: a.generateFrameNumbers('madking-attack2',  { start: 0, end: 3 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'madking-attack3',  frames: a.generateFrameNumbers('madking-attack3',  { start: 0, end: 3 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'madking-take-hit', frames: a.generateFrameNumbers('madking-take-hit', { start: 0, end: 3 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'madking-death',    frames: a.generateFrameNumbers('madking-death',    { start: 0, end: 5 }), frameRate: 8,  repeat: 0  });
   }
 
   private initPlayerSprite(heroClass: string) {
@@ -735,14 +759,14 @@ export class GameScene extends Phaser.Scene {
         const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Goblin', {
           fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
         }).setOrigin(0.5, 1).setDepth(9);
-        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '' };
+        sp = { body: null, sprite: spr, chargeSprite: null, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '', wasFiring: false };
 
       } else if (e.name === 'Skeleton') {
         const spr = this.add.sprite(e.x, e.y, 'skeleton-attack', 0).setDepth(8).setScale(0.95);
         const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Skeleton', {
           fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
         }).setOrigin(0.5, 1).setDepth(9);
-        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '' };
+        sp = { body: null, sprite: spr, chargeSprite: null, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '', wasFiring: false };
 
       } else if (e.name === 'Bat') {
         const spr = this.add.sprite(e.x, e.y, 'bat-fly', 0).setDepth(8).setScale(1.3);
@@ -750,7 +774,7 @@ export class GameScene extends Phaser.Scene {
         const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Bat', {
           fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
         }).setOrigin(0.5, 1).setDepth(9);
-        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'bat-fly' };
+        sp = { body: null, sprite: spr, chargeSprite: null, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'bat-fly', wasFiring: false };
 
       } else if (e.name === 'Slime') {
         const spr = this.add.sprite(e.x, e.y, 'slime-idle', 0).setDepth(8).setScale(1.1);
@@ -758,14 +782,14 @@ export class GameScene extends Phaser.Scene {
         const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Slime', {
           fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
         }).setOrigin(0.5, 1).setDepth(9);
-        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'slime-idle' };
+        sp = { body: null, sprite: spr, chargeSprite: null, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'slime-idle', wasFiring: false };
 
       } else if (e.name === 'Mushroom') {
         const spr = this.add.sprite(e.x, e.y, 'mushroom-attack', 0).setDepth(8).setScale(1.0);
         const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Mushroom', {
           fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
         }).setOrigin(0.5, 1).setDepth(9);
-        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '' };
+        sp = { body: null, sprite: spr, chargeSprite: null, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '', wasFiring: false };
 
       } else if (e.name === 'Mimic') {
         const spr = this.add.sprite(e.x, e.y, 'mimic-idle-closed', 0).setDepth(8).setScale(1.1);
@@ -773,8 +797,16 @@ export class GameScene extends Phaser.Scene {
         const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, '???', {
           fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
         }).setOrigin(0.5, 1).setDepth(9);
-        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'mimic-idle-closed' };
+        sp = { body: null, sprite: spr, chargeSprite: null, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'mimic-idle-closed', wasFiring: false };
         isNewMimic = true;
+
+      } else if (e.name === 'Mad King') {
+        const spr = this.add.sprite(e.x, e.y, 'madking-idle', 0).setDepth(8).setScale(1.3);
+        spr.play('madking-idle');
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 14, 'Mad King', {
+          fontFamily: 'Courier New', fontSize: '10px', color: '#e8b4b8',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, chargeSprite: null, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'madking-idle', wasFiring: false };
 
       } else {
         // Regular enemies (Skeleton, Goblin, Spider) — coloured rectangle
@@ -832,6 +864,13 @@ export class GameScene extends Phaser.Scene {
         sp.sprite.play('mimic-death');
         sp.sprite.once('animationcomplete', () => {
           this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 300, onComplete: () => sp!.sprite?.setVisible(false) });
+        });
+
+      } else if (e.name === 'Mad King' && sp.sprite) {
+        sp.animKey = 'madking-death';
+        sp.sprite.play('madking-death');
+        sp.sprite.once('animationcomplete', () => {
+          this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 500, onComplete: () => sp!.sprite?.setVisible(false) });
         });
 
       } else if (sp.sprite) {
@@ -1000,6 +1039,24 @@ export class GameScene extends Phaser.Scene {
             const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
             const want   = moving ? 'mimic-walk' : 'mimic-idle-transformed';
             if (sp.animKey !== want) { sp.animKey = want; sp.sprite.play(want); }
+          }
+
+        } else if (e.name === 'Mad King') {
+          const LOCKED_MK = new Set(['madking-take-hit', 'madking-death', 'madking-attack1', 'madking-attack2', 'madking-attack3']);
+          if (e.health < sp.prevHp && !LOCKED_MK.has(sp.animKey)) {
+            sp.animKey = 'madking-take-hit';
+            sp.sprite!.play('madking-take-hit');
+            sp.sprite!.once('animationcomplete', () => {
+              if (sp!.animKey === 'madking-take-hit') {
+                const moving = Math.abs(e.x - sp!.prevX) > 1 || Math.abs(e.y - sp!.prevY) > 1;
+                sp!.animKey = moving ? 'madking-run' : 'madking-idle';
+                sp!.sprite?.play(sp!.animKey);
+              }
+            });
+          } else if (!LOCKED_MK.has(sp.animKey)) {
+            const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
+            const want   = moving ? 'madking-run' : 'madking-idle';
+            if (sp.animKey !== want) { sp.animKey = want; sp.sprite!.play(want); }
           }
 
         } else {
@@ -1370,21 +1427,22 @@ export class GameScene extends Phaser.Scene {
   // The chest sits at the top-centre of the room. Only one player can interact
   // at a time — others see "IN USE" until the current player claims or closes.
   private syncChest(room: RoomState, me: PlayerState | undefined) {
-    if (room.type !== 'TreasureChest') {
+    if (room.type !== 'TreasureChest' || room.chestGold === 0) {
       this.destroyChest();
       return;
     }
 
     const cx = REGION_W / 2;
-    const cy = 80;
+    const cy = REGION_H / 2;
 
     if (!this.chestSprite) {
-      const body = this.add.rectangle(cx, cy, 44, 32, 0x3d1f0a)
-        .setDepth(7).setStrokeStyle(1.5, 0x6b4420, 1);
-      const label = this.add.text(cx, cy - 26, 'CHEST', {
+      // frame 0 = closed dark-wood chest (row 0, col 0 of the 60×32 sheet)
+      const body = this.add.sprite(cx, cy, 'chest-sheet', 0)
+        .setDepth(7).setScale(2);
+      const label = this.add.text(cx, cy - 38, 'CHEST', {
         fontFamily: 'Courier New', fontSize: '11px', color: '#c9a84c',
       }).setOrigin(0.5, 1).setDepth(8);
-      const hint = this.add.text(cx, cy + 22, 'LOCKED', {
+      const hint = this.add.text(cx, cy + 38, 'LOCKED', {
         fontFamily: 'Courier New', fontSize: '9px', color: '#444444',
       }).setOrigin(0.5, 0).setDepth(8);
       this.chestSprite = { body, label, hint };
@@ -1394,14 +1452,17 @@ export class GameScene extends Phaser.Scene {
 
     const { body, hint } = this.chestSprite;
 
-    // One-time visual upgrade the first time the room is cleared.
-    if (!this.chestIsOpen) {
+    // Switch to the open frame the first time someone clicks the chest.
+    // Triggered by chestOpenerId being set (a player has the loot window open)
+    // or chestClaimed being true (this player already claimed their gold).
+    const chestHasBeenOpened = !!room.chestOpenerId || (me?.chestClaimed ?? false);
+    if (chestHasBeenOpened && !this.chestIsOpen) {
       this.chestIsOpen = true;
-      body.setFillStyle(0x7a5512).setStrokeStyle(2, 0xc9a84c, 1);
-      this.tweens.add({ targets: body, scaleX: 1.25, scaleY: 1.25, duration: 160, yoyo: true });
-      this.tweens.add({ targets: body, alpha: 0.55, duration: 900, yoyo: true, repeat: -1 });
-      body.on('pointerover', () => body.setAlpha(1));
-      body.on('pointerout',  () => { /* let the pulse tween control alpha */ });
+      body.setFrame(5);  // frame 5 = fully open dark-wood chest (row 0, col 5)
+      this.tweens.add({
+        targets: body, scaleX: 2.4, scaleY: 2.4, duration: 160,
+        yoyo: true, onComplete: () => body.setScale(2),
+      });
     }
 
     // Update hint text and click handler based on lock/claim state each tick.
@@ -1411,8 +1472,9 @@ export class GameScene extends Phaser.Scene {
     body.off('pointerdown');
 
     if (claimed) {
-      hint.setText('CLAIMED').setStyle({ color: '#555555' });
-      body.disableInteractive();
+      hint.setText('▶ VIEW CHEST').setStyle({ color: '#555555' });
+      body.setInteractive({ useHandCursor: true });
+      body.on('pointerdown', () => this.game.events.emit('viewClaimedChest'));
     } else if (inUse) {
       hint.setText('IN USE').setStyle({ color: '#666666' });
       body.disableInteractive();

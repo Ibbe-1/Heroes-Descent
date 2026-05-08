@@ -56,19 +56,18 @@ public class DungeonGenerator
 
     private static RoomState MakeChestRoom(int index, int floor)
     {
-        int gold = Random.Shared.Next(15, 31);
-
-        // 35% chance the chest is a Mimic in disguise — players must defeat it before looting.
+        // 35% chance the encounter is a Mimic — same room, no chest reward.
         if (Random.Shared.Next(100) < 35)
         {
             var (mx, my) = RandomEnemyPosition();
-            return new RoomState(index, RoomType.TreasureChest, [new EnemyInstance(new Mimic(), mx, my)], gold);
+            return new RoomState(index, RoomType.TreasureChest, [new EnemyInstance(new Mimic(), mx, my)]);
         }
 
+        // Mad King guards the chest — defeat him to unlock 50 gold.
         var guardian = new ChestGuardian();
         if (floor > 1) guardian.ScaleForFloor(floor - 1);
         var (gx, gy) = RandomEnemyPosition();
-        return new RoomState(index, RoomType.TreasureChest, [new EnemyInstance(guardian, gx, gy)], gold);
+        return new RoomState(index, RoomType.TreasureChest, [new EnemyInstance(guardian, gx, gy)], 50);
     }
 
     private static RoomState MakeBossRoom(int index, int floor)

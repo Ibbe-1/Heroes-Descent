@@ -249,6 +249,36 @@ public class GameService
         return (true, log);
     }
 
+    // ── Chest interaction ─────────────────────────────────────────────────────
+
+    // Called when a player clicks the opened treasure chest.
+    // Locks the chest so only this player can browse it. Fails silently if
+    // the room isn't a cleared TreasureChest or another player holds the lock.
+    public (bool acted, List<string> log) TryInteractChest(GameSession session, string userId)
+    {
+        if (!session.CurrentRoom.TryLockChest(userId)) return (false, []);
+        return (true, []);
+    }
+
+    // Called when the player clicks the gold item inside the loot window.
+    // Awards ChestGold to the player and releases the chest lock.
+    public (bool acted, List<string> log) TryClaimChest(GameSession session, string userId)
+    {
+        var room   = session.CurrentRoom;
+        var player = session.Players.FirstOrDefault(p => p.UserId == userId);
+        if (player is null || !room.MarkClaimed(userId)) return (false, []);
+        player.Gold += room.ChestGold;
+        return (true, [$"✦ {player.Username} claims {room.ChestGold} gold from the chest!"]);
+    }
+
+    // Called when the player clicks Close without taking the gold.
+    // Releases the chest lock so another player can open it.
+    public (bool acted, List<string> log) TryCloseChest(GameSession session, string userId)
+    {
+        if (!session.CurrentRoom.ReleaseChest(userId)) return (false, []);
+        return (true, []);
+    }
+
     // Returns the closest enemy inside a cone (halfAngle radians either side of the aim direction).
     private static EnemyInstance? FindConeTarget(
         List<EnemyInstance> alive, float px, float py, float dirX, float dirY,

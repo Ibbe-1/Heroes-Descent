@@ -91,5 +91,20 @@ export class GameEngine {
     this.connection.invoke('MoveToNextRoom', this._sessionId).catch(() => {});
   }
 
+  // Locks the chest for this player (opens the loot window on the server side).
+  interactChest(): void {
+    this.connection.invoke('InteractChest', this._sessionId).catch(() => {});
+  }
+
+  // Claims the gold from the chest. Server distributes gold and releases the lock.
+  claimChest(): void {
+    this.connection.invoke('ClaimChest', this._sessionId).catch(() => {});
+  }
+
+  // Closes the loot window without claiming. Releases the lock for other players.
+  closeChest(): void {
+    this.connection.invoke('CloseChest', this._sessionId).catch(() => {});
+  }
+
   get sessionId(): string { return this._sessionId; }
 }

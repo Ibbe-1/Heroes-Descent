@@ -35,6 +35,7 @@ public class RoomState
     public bool TryLockChest(string userId)
     {
         if (Type != RoomType.TreasureChest || !IsCleared) return false;
+        if (ChestGold == 0) return false;   // Mimic room — no chest to open
         if (ChestOpenerId is not null) return false;
         if (_claimers.Contains(userId)) return false;
         ChestOpenerId = userId;
