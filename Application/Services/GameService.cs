@@ -719,9 +719,9 @@ public class GameService
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     // Cooldown formula: faster heroes attack more often.
-    // Warrior (Speed 7) → 2 300 ms, Wizard (Speed 10) → 2 000 ms, Archer (Speed 14) → 1 600 ms.
+    // Warrior (Speed 7) → 1 300 ms, Wizard (Speed 10) → 1 000 ms, Archer (Speed 14) → 600 ms.
     public static int AttackCooldownMs(Hero hero) =>
-        Math.Max(800, 3000 - hero.Speed * 100);
+        Math.Max(500, 2000 - hero.Speed * 100);
 
     // Euclidean distance between two 2D points.
     private static float Dist(float x1, float y1, float x2, float y2)

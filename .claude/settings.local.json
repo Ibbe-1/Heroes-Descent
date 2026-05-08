@@ -13,7 +13,9 @@
       "Bash(Format-Table FullName)",
       "Bash(npx tsc *)",
       "Bash(Select-Object -Property FullName)",
-      "Bash(python3 *)"
+      "Bash(python3 *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Gragas\\\\source\\\\repos\\\\Grupparbete\\\\Heroes Descent\" -Recurse -Filter \"*.cs\")",
+      "Bash(Select-Object -First 50)"
     ]
   }
 }
