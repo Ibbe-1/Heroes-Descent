@@ -11,12 +11,15 @@ public class RoomState
     // Zero for non-TreasureChest rooms.
     public int ChestGold { get; }
 
-    // Prevents the chest from paying out twice if MoveToNextRoom is somehow
-    // called while still on a chest room (e.g. a client sending a duplicate message).
-    public bool ChestOpened { get; private set; }
+    // userId of whichever player currently has the chest loot window open.
+    // Null when nobody is interacting. Ensures only one player at a time can browse the chest.
+    public string? ChestOpenerId { get; private set; }
+
+    // Players who have already claimed their gold. Each player gets one claim.
+    private readonly HashSet<string> _claimers = [];
 
     // True once every enemy in the room is dead. For TreasureChest rooms
-    // this means the ChestGuardian has been defeated.
+    // this means the guardian has been defeated.
     public bool IsCleared => Enemies.All(e => !e.Enemy.IsAlive);
 
     public RoomState(int index, RoomType type, List<EnemyInstance> enemies, int chestGold = 0)
@@ -27,6 +30,33 @@ public class RoomState
         ChestGold = chestGold;
     }
 
-    // Called from GameHub.MoveToNextRoom when the party enters a TreasureChest room.
-    public void OpenChest() => ChestOpened = true;
+    // Attempts to lock the chest for this player.
+    // Fails if the room isn't a cleared TreasureChest, someone else holds the lock, or this player already claimed.
+    public bool TryLockChest(string userId)
+    {
+        if (Type != RoomType.TreasureChest || !IsCleared) return false;
+        if (ChestOpenerId is not null) return false;
+        if (_claimers.Contains(userId)) return false;
+        ChestOpenerId = userId;
+        return true;
+    }
+
+    // Releases the lock without paying out — only the current holder can do this.
+    public bool ReleaseChest(string userId)
+    {
+        if (ChestOpenerId != userId) return false;
+        ChestOpenerId = null;
+        return true;
+    }
+
+    // Marks this player as having claimed their gold and releases the lock.
+    public bool MarkClaimed(string userId)
+    {
+        if (ChestOpenerId != userId) return false;
+        _claimers.Add(userId);
+        ChestOpenerId = null;
+        return true;
+    }
+
+    public bool HasClaimed(string userId) => _claimers.Contains(userId);
 }

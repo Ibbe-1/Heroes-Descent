@@ -10,6 +10,15 @@
 
 export type HeroClass = 'Warrior' | 'Wizard' | 'Archer';
 
+// A fireball currently flying through the room.
+// The server updates its position every 100 ms tick; when it disappears from the
+// list it either hit a player or ran out of range — show an impact burst either way.
+export interface ActiveProjectile {
+  id: string;  // matches a sprite the frontend is already tracking
+  x: number;
+  y: number;
+}
+
 // One enemy currently in the room.
 // x / y are pixel coordinates in the 960 × 640 game canvas space —
 // the Phaser scene uses them to position the enemy's rectangle sprite.
@@ -21,6 +30,16 @@ export interface EnemyState {
   isAlive: boolean;
   x: number;
   y: number;
+
+  // Golem laser charge fields — 0 / false for all other enemies.
+  // chargePercent: 0 = idle, 0–1 = fraction of the 2 s charge elapsed (shown as a bar).
+  // isLaserFiring: true for ~700 ms after the beam fires (triggers the beam animation).
+  // laserDirX/Y: normalised unit vector locked in at charge start toward the player.
+  //              The frontend rotates beam/charge sprites using Math.atan2(laserDirY, laserDirX).
+  chargePercent: number;
+  isLaserFiring: boolean;
+  laserDirX: number;
+  laserDirY: number;
 }
 
 export interface RoomState {
@@ -70,4 +89,5 @@ export interface GameState {
   log: string[];        // last 15 combat log lines
   isGameOver: boolean;
   isVictory: boolean;
+  activeProjectiles: ActiveProjectile[];  // fireballs currently in flight (empty most ticks)
 }

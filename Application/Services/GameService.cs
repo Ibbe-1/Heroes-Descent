@@ -1,4 +1,5 @@
 using Heroes_Descent.Application.Dtos;
+using Heroes_Descent.Core.Entities.Enemies;
 using Heroes_Descent.Core.Entities.Heroes;
 using Heroes_Descent.Core.GameState;
 
@@ -55,10 +56,7 @@ public class GameService
             log.Add($"{nearest.Enemy.Name} is defeated! (+{gold}g)");
             player.Hero.GainExperience(nearest.Enemy.ExperienceReward);
             if (session.CurrentRoom.IsCleared)
-            {
-                TryOpenChest(session, log);
                 log.Add("Room cleared — advance when ready.");
-            }
         }
 
         return (true, log);
@@ -67,7 +65,7 @@ public class GameService
     // Called when a player presses Q.
     // Each hero class has a completely different ability, so we switch on the
     // concrete type and call the appropriate logic.
-    public (bool acted, List<string> log) PlayerUseAbility(GameSession session, string userId)
+    public (bool acted, List<string> log) PlayerUseAbility(GameSession session, string userId, float dirX = 0f, float dirY = 0f)
     {
         var player = session.Players.FirstOrDefault(p => p.UserId == userId);
         if (player is null || !player.Hero.IsAlive)   return (false, []);
@@ -85,62 +83,103 @@ public class GameService
         }
         else if (player.Hero is Wizard wizard)
         {
-            // Wizard: Fireball hits EVERY alive enemy in the room for the same damage.
-            // UseAbility() deducts mana and returns the magic damage value.
-            int dmg = wizard.UseAbility();
-            int wizardGold = 0;
-            foreach (var e in alive)
+            // Wizard: Fireball is a directional skillshot. It ray-casts to the first enemy
+            // it hits for full damage, then splashes 60% to enemies within WizardSplashRadius.
+            float len = MathF.Sqrt(dirX * dirX + dirY * dirY);
+            if (len < 0.001f) { dirX = 0f; dirY = -1f; }
+            else { dirX /= len; dirY /= len; }
+
+            int dmg = wizard.UseAbility();  // deduct mana regardless of hit/miss
+
+            var primary = FindRayTarget(alive, player.X, player.Y, dirX, dirY,
+                RoomBounds.WizardAttackRange, RoomBounds.WizardHitRadius);
+
+            if (primary is null)
             {
-                var actual = e.Enemy.TakeDamage(dmg);
-                log.Add($"Fireball scorches {e.Enemy.Name} for {actual} magic dmg!");
-                if (!e.Enemy.IsAlive)
+                log.Add("Fireball fizzles — nothing in range!");
+            }
+            else
+            {
+                int wizardGold = 0;
+                var actual = primary.Enemy.TakeDamage(dmg);
+                log.Add($"Fireball strikes {primary.Enemy.Name} for {actual} magic dmg!");
+                if (!primary.Enemy.IsAlive)
                 {
-                    log.Add($"{e.Enemy.Name} is incinerated!");
-                    player.Hero.GainExperience(e.Enemy.ExperienceReward);
-                    wizardGold += e.Enemy.GoldReward;
+                    log.Add($"{primary.Enemy.Name} is incinerated!");
+                    player.Hero.GainExperience(primary.Enemy.ExperienceReward);
+                    wizardGold += primary.Enemy.GoldReward;
                 }
-            }
-            if (wizardGold > 0)
-            {
-                player.Gold += wizardGold;
-                log.Add($"{player.Username} looted {wizardGold} gold!");
-            }
-            if (session.CurrentRoom.IsCleared && alive.Count > 0)
-            {
-                TryOpenChest(session, log);
-                log.Add("Room cleared — advance when ready.");
+
+                int splashDmg = (int)(dmg * 0.6f);
+                foreach (var e in alive.Where(e => e != primary && e.Enemy.IsAlive))
+                {
+                    if (Dist(primary.X, primary.Y, e.X, e.Y) > RoomBounds.WizardSplashRadius) continue;
+                    var splashActual = e.Enemy.TakeDamage(splashDmg);
+                    log.Add($"Splash burns {e.Enemy.Name} for {splashActual} magic dmg!");
+                    if (!e.Enemy.IsAlive)
+                    {
+                        log.Add($"{e.Enemy.Name} is incinerated!");
+                        player.Hero.GainExperience(e.Enemy.ExperienceReward);
+                        wizardGold += e.Enemy.GoldReward;
+                    }
+                }
+
+                if (wizardGold > 0)
+                {
+                    player.Gold += wizardGold;
+                    log.Add($"{player.Username} looted {wizardGold} gold!");
+                }
+                if (session.CurrentRoom.IsCleared)
+                    log.Add("Room cleared — advance when ready.");
             }
         }
         else if (player.Hero is Archer archer)
         {
-            // Archer: Multi-Shot fires at 2 random enemies.
-            // UseAbility() spends Energy and returns how many targets to hit.
-            int targetCount = archer.UseAbility();
-            var targets = alive.OrderBy(_ => Random.Shared.Next()).Take(targetCount).ToList();
+            // Archer: Multi-Shot fires 3 arrows in a ±15° spread from the aim direction.
+            // Each arrow is an independent ray-cast, so a single arrow can crit.
+            int arrowCount = archer.UseAbility();
+
+            float len = MathF.Sqrt(dirX * dirX + dirY * dirY);
+            if (len < 0.001f) { dirX = 0f; dirY = -1f; }  // default: aim up
+            else { dirX /= len; dirY /= len; }
+
+            float centerAngle = MathF.Atan2(dirY, dirX);
+            float spread      = MathF.PI / 12f;  // 15° between arrows
+
             int archerGold = 0;
-            foreach (var e in targets)
+            var hitEnemies = new HashSet<EnemyInstance>();
+
+            for (int i = 0; i < arrowCount; i++)
             {
-                var raw    = archer.BasicAttack();            // rolls for crit internally
-                bool isCrit = raw == archer.BaseAttack * 2;  // detect crit by comparing to base
-                var actual  = e.Enemy.TakeDamage(raw);
-                log.Add($"Arrow pierces {e.Enemy.Name} for {actual} dmg{(isCrit ? " [CRIT!]" : "")}");
-                if (!e.Enemy.IsAlive)
+                float angle = centerAngle + (i - 1) * spread;  // –15°, 0°, +15°
+                float rdx   = MathF.Cos(angle);
+                float rdy   = MathF.Sin(angle);
+
+                var target = FindRayTarget(alive, player.X, player.Y, rdx, rdy,
+                    RoomBounds.ArcherAttackRange, RoomBounds.ArcherHitRadius);
+
+                if (target is null || hitEnemies.Contains(target)) continue;
+                hitEnemies.Add(target);
+
+                var raw    = archer.BasicAttack();
+                bool isCrit = raw == archer.BaseAttack * 2;
+                var actual  = target.Enemy.TakeDamage(raw);
+                log.Add($"Arrow pierces {target.Enemy.Name} for {actual} dmg{(isCrit ? " [CRIT!]" : "")}");
+                if (!target.Enemy.IsAlive)
                 {
-                    log.Add($"{e.Enemy.Name} is defeated!");
-                    player.Hero.GainExperience(e.Enemy.ExperienceReward);
-                    archerGold += e.Enemy.GoldReward;
+                    log.Add($"{target.Enemy.Name} is defeated!");
+                    player.Hero.GainExperience(target.Enemy.ExperienceReward);
+                    archerGold += target.Enemy.GoldReward;
                 }
             }
+
             if (archerGold > 0)
             {
                 player.Gold += archerGold;
                 log.Add($"{player.Username} looted {archerGold} gold!");
             }
             if (session.CurrentRoom.IsCleared)
-            {
-                TryOpenChest(session, log);
                 log.Add("Room cleared — advance when ready.");
-            }
         }
 
         return (log.Count > 0, log);
@@ -204,10 +243,7 @@ public class GameService
             log.Add($"{target.Enemy.Name} is defeated! (+{gold}g)");
             player.Hero.GainExperience(target.Enemy.ExperienceReward);
             if (session.CurrentRoom.IsCleared)
-            {
-                TryOpenChest(session, log);
                 log.Add("Room cleared — advance when ready.");
-            }
         }
 
         return (true, log);
@@ -288,9 +324,15 @@ public class GameService
             float dy   = target.Y - inst.Y;
             float dist = MathF.Sqrt(dx * dx + dy * dy);
 
-            // Stop moving once the enemy is practically on top of the player
-            // to avoid jitter when they're already in melee range.
-            if (dist < 30f) continue;
+            // Golem freezes in place during laser charge — it is winding up, not chasing.
+            if (inst.Enemy is GolemEnemy && inst.GolemIsCharging) continue;
+
+            // Boss/Golem stop at their melee stop distance; ranged enemies stop at shoot range; others at 30 px.
+            float stopDist = inst.Enemy is BossEnemy  ? RoomBounds.BossStopDistance
+                           : inst.Enemy is GolemEnemy ? RoomBounds.GolemStopDistance
+                           : inst.Enemy.ShootsProjectiles ? inst.Enemy.ProjectileRange - 30f
+                           : 30f;
+            if (dist < stopDist) continue;
 
             // Normalise the direction vector (dx/dist, dy/dist) so diagonal
             // movement isn't faster than cardinal movement, then scale by speed.
@@ -300,20 +342,38 @@ public class GameService
         }
     }
 
-    // Handles enemy attacks — called every tick by EnemyAiService, but internally
-    // only fires every 800 ms (checked via session.LastEnemyTick).
-    // Only enemies within EnemyAttackRange (80 px) of a player deal damage,
-    // which rewards players who keep their distance.
+    // Handles enemy attacks — called every 100 ms by EnemyAiService.
+    //
+    // Regular enemies use a shared 800 ms global tick.
+    // The Dark Mage boss uses a hybrid model:
+    //   • Melee  (≤ BossMeleeRange px)  — fires on the global 800 ms tick.
+    //   • Ranged (BossMeleeRange–BossRangedMax px) — fires on its own 1 400 ms cooldown.
+    //   • Chase  (> BossRangedMax px)   — no attack; boss just closes the gap.
     public List<string> TickEnemyAttacks(GameSession session)
     {
-        if (DateTime.UtcNow - session.LastEnemyTick < TimeSpan.FromMilliseconds(800))
-            return [];   // 800 ms hasn't elapsed yet
+        var now = DateTime.UtcNow;
 
-        session.LastEnemyTick = DateTime.UtcNow;
+        bool globalReady = now - session.LastEnemyTick >= TimeSpan.FromMilliseconds(800);
 
-        // Tick passive resource regeneration for the Archer class.
-        foreach (var p in session.Players)
-            if (p.Hero is Archer a) a.TryRegenEnergy();
+        // Allow the method to run outside the global tick if the boss or Golem has a
+        // ranged shot ready — melee and ranged attacks run on independent cooldowns.
+        bool bossRangedReady = session.CurrentRoom.Enemies.Any(e =>
+            e.Enemy is BossEnemy && e.Enemy.IsAlive &&
+            (now - e.LastRangedAttackTime).TotalMilliseconds >= RoomBounds.BossRangedCooldownMs);
+
+        // Same check for the Golem — its 2 000 ms cooldown is tracked per-instance.
+        bool golemRangedReady = session.CurrentRoom.Enemies.Any(e =>
+            e.Enemy is GolemEnemy && e.Enemy.IsAlive &&
+            (now - e.LastRangedAttackTime).TotalMilliseconds >= RoomBounds.GolemRangedCooldownMs);
+
+        if (!globalReady && !bossRangedReady && !golemRangedReady) return [];
+
+        if (globalReady)
+        {
+            session.LastEnemyTick = now;
+            foreach (var p in session.Players)
+                if (p.Hero is Archer a) a.TryRegenEnergy();
+        }
 
         var alive = session.Players.Where(p => p.Hero.IsAlive).ToList();
         if (!alive.Any()) return [];
@@ -322,36 +382,263 @@ public class GameService
 
         foreach (var inst in session.CurrentRoom.Enemies.Where(e => e.Enemy.IsAlive))
         {
-            // Only attack players within range — kiting is a valid strategy.
-            var target = alive
-                .Where(p => Dist(p.X, p.Y, inst.X, inst.Y) <= RoomBounds.EnemyAttackRange)
-                .MinBy(p => Dist(p.X, p.Y, inst.X, inst.Y));
-
+            var target = alive.MinBy(p => Dist(p.X, p.Y, inst.X, inst.Y));
             if (target is null) continue;
 
-            int rawDmg = inst.Enemy.Attack;
+            float dist = Dist(target.X, target.Y, inst.X, inst.Y);
 
-            // If the warrior activated Shield Block since the last tick, halve this hit.
-            if (target.Hero is Warrior w && w.IsBlocking)
+            if (inst.Enemy is BossEnemy)
             {
-                rawDmg /= 2;
-                w.ClearBlock();
-                log.Add($"{target.Username} blocks! Hit reduced to {rawDmg}.");
+                if (dist <= RoomBounds.BossMeleeRange && globalReady)
+                {
+                    // Player is right next to the boss — apply melee damage instantly.
+                    log.AddRange(ApplyHit(inst.Enemy.Attack, inst.Enemy.Name, target, session, alive));
+                }
+                else if (dist > RoomBounds.BossMeleeRange && dist <= RoomBounds.BossRangedMax &&
+                         (now - inst.LastRangedAttackTime).TotalMilliseconds >= RoomBounds.BossRangedCooldownMs)
+                {
+                    // Player is at mid range — launch a fireball that travels toward where
+                    // the player is standing RIGHT NOW. Moving after the shot is fired dodges it.
+                    inst.LastRangedAttackTime = now;
+                    session.ActiveProjectiles.Add(
+                        new ActiveProjectile(inst.X, inst.Y, target.X, target.Y, inst.Enemy.Attack, "Dark Mage's fireball"));
+                    log.Add($"Dark Mage fires a fireball at {target.Username}!");
+                }
+                // else: player is beyond BossRangedMax — boss chases, no attack.
+            }
+            else if (inst.Enemy is GolemEnemy)
+            {
+                // Golem is charging its laser — suppress all normal attacks during wind-up.
+                // Damage will come from TickGolemLaserCharge instead.
+                if (inst.GolemIsCharging) { /* winding up — no normal attacks */ }
+                else if (dist <= RoomBounds.GolemMeleeRange && globalReady)
+                {
+                    // Player is in melee range — stone-fist smash on the global 800 ms tick.
+                    log.AddRange(ApplyHit(inst.Enemy.Attack, inst.Enemy.Name, target, session, alive));
+                }
+                else if (dist > RoomBounds.GolemMeleeRange && dist <= RoomBounds.GolemRangedMax &&
+                         (now - inst.LastRangedAttackTime).TotalMilliseconds >= RoomBounds.GolemRangedCooldownMs)
+                {
+                    // Player is at mid range — hurl a glowing arm projectile toward the player's
+                    // current position. Moving out of the way after it is fired will dodge the hit.
+                    inst.LastRangedAttackTime = now;
+                    session.ActiveProjectiles.Add(
+                        new ActiveProjectile(inst.X, inst.Y, target.X, target.Y, inst.Enemy.Attack, "Golem's projectile"));
+                    log.Add($"Golem hurls a projectile at {target.Username}!");
+                }
+                // else: player is beyond GolemRangedMax — Golem chases, no attack.
+            }
+            else if (globalReady)
+            {
+                // Regular enemies — unchanged instant melee/ranged damage.
+                float atkRange = inst.Enemy.ShootsProjectiles && inst.Enemy.ProjectileRange > 0f
+                    ? inst.Enemy.ProjectileRange
+                    : RoomBounds.EnemyAttackRange;
+                if (dist > atkRange) continue;
+                log.AddRange(ApplyHit(inst.Enemy.Attack, inst.Enemy.Name, target, session, alive));
             }
 
-            var actual = target.Hero.TakeDamage(rawDmg);
-            log.Add($"{inst.Enemy.Name} strikes {target.Username} for {actual} dmg!");
+            if (session.IsGameOver) break;
+        }
 
-            if (!target.Hero.IsAlive)
+        return log;
+    }
+
+    // Handles the Golem's laser charge ability.
+    //
+    // Called every 100 ms tick alongside MoveEnemies and TickEnemyAttacks.
+    // Three HP thresholds (75 %, 50 %, 25 %) each trigger one laser charge:
+    //   1. Golem freezes and gains GolemLaserDefenseBonus defence for 2 s.
+    //   2. After 2 s the laser fires — all alive players take heavy damage.
+    //   3. Defence returns to its pre-charge value.
+    //
+    // The method also clears the GolemLaserFiredTime flag once the
+    // GolemLaserFiringVisualMs window has elapsed so the frontend stops
+    // showing the beam animation.
+    public List<string> TickGolemLaserCharge(GameSession session)
+    {
+        var log = new List<string>();
+        var now = DateTime.UtcNow;
+
+        foreach (var inst in session.CurrentRoom.Enemies
+            .Where(e => e.Enemy is GolemEnemy && e.Enemy.IsAlive))
+        {
+            var golem = (GolemEnemy)inst.Enemy;
+
+            // ── Clear the firing visual window once it has expired ──────────────
+            if (inst.GolemLaserFiredTime.HasValue &&
+                (now - inst.GolemLaserFiredTime.Value).TotalMilliseconds >= RoomBounds.GolemLaserFiringVisualMs)
             {
-                log.Add($"{target.Username} has fallen!");
-                alive.Remove(target);   // don't keep attacking a corpse this tick
-                if (!alive.Any())
+                inst.GolemLaserFiredTime = null;
+            }
+
+            // ── Check HP thresholds — start a new charge if one is crossed ──────
+            if (!inst.GolemIsCharging)
+            {
+                float hpPct = (float)golem.Health / golem.MaxHealth * 100f;
+                // Thresholds in descending order so 75 % fires before 50 % if both
+                // happen simultaneously (e.g. a large burst of damage).
+                foreach (int threshold in new[] { 75, 50, 25 })
                 {
-                    session.IsGameOver = true;
-                    log.Add("The party has been wiped out...");
-                    break;
+                    if (hpPct <= threshold && !inst.GolemLaserThresholdsUsed.Contains(threshold))
+                    {
+                        inst.GolemLaserThresholdsUsed.Add(threshold);
+                        inst.GolemChargeStartTime = now;
+                        golem.BeginLaserCharge();   // raises defence for the wind-up window
+
+                        // Lock in the beam direction toward the nearest alive player.
+                        // Direction stays fixed for the whole 2 s wind-up — moving out of
+                        // the corridor before the shot fires will avoid the damage.
+                        var nearest = session.Players
+                            .Where(p => p.Hero.IsAlive)
+                            .MinBy(p => Dist(p.X, p.Y, inst.X, inst.Y));
+                        if (nearest is not null)
+                        {
+                            float ldx = nearest.X - inst.X;
+                            float ldy = nearest.Y - inst.Y;
+                            float llen = MathF.Sqrt(ldx * ldx + ldy * ldy);
+                            inst.GolemLaserDirX = llen > 0.001f ? ldx / llen : 1f;
+                            inst.GolemLaserDirY = llen > 0.001f ? ldy / llen : 0f;
+                        }
+
+                        log.Add($"Golem begins charging its laser ({threshold}% HP threshold)!");
+                        break;  // only one threshold per tick — next tick handles the next one
+                    }
                 }
+            }
+
+            // ── If charging, fire when the full charge duration has elapsed ──────
+            if (inst.GolemIsCharging && inst.GolemChargeStartTime.HasValue)
+            {
+                double elapsed = (now - inst.GolemChargeStartTime.Value).TotalMilliseconds;
+                if (elapsed >= RoomBounds.GolemChargeDurationMs)
+                {
+                    // ── Laser fires — damage only players inside the beam corridor ──────
+                    inst.GolemChargeStartTime = null;  // no longer charging
+                    inst.GolemLaserFiredTime  = now;   // start the beam visual window
+                    golem.EndLaserCharge();            // restore pre-charge defence
+
+                    int laserDmg = (int)(golem.Attack * RoomBounds.GolemLaserDamageMultiplier);
+                    var alive    = session.Players.Where(p => p.Hero.IsAlive).ToList();
+                    log.Add("Golem unleashes its laser beam!");
+
+                    // Only players inside the beam corridor are hit.
+                    // The corridor is defined by:
+                    //   • In front of the Golem (dot product > 0 with LaserDir)
+                    //   • Within GolemLaserRange px along the beam axis
+                    //   • Within ±GolemLaserWidth px perpendicular to the beam axis
+                    // Backing out of the line or sidestepping > 80 px avoids all damage.
+                    foreach (var player in alive.ToList())
+                    {
+                        float pdx  = player.X - inst.X;
+                        float pdy  = player.Y - inst.Y;
+                        float dot  = pdx * inst.GolemLaserDirX + pdy * inst.GolemLaserDirY;
+
+                        // Player is behind the Golem or too far away → not hit.
+                        if (dot < 0f || dot > RoomBounds.GolemLaserRange) continue;
+
+                        // Perpendicular distance from the beam centre line.
+                        float perpX = pdx - inst.GolemLaserDirX * dot;
+                        float perpY = pdy - inst.GolemLaserDirY * dot;
+                        float perp  = MathF.Sqrt(perpX * perpX + perpY * perpY);
+
+                        // Player sidestepped out of the corridor → not hit.
+                        if (perp > RoomBounds.GolemLaserWidth) continue;
+
+                        log.AddRange(ApplyHit(laserDmg, "Golem's laser", player, session, alive));
+                        if (session.IsGameOver) break;
+                    }
+                }
+            }
+        }
+
+        return log;
+    }
+
+    // Moves every active fireball one step forward and checks whether it has hit
+    // a player or exceeded its maximum range.
+    //
+    // Called every 100 ms tick — the same rate as MoveEnemies — so projectile
+    // positions are always current when BuildDto snapshots them for the broadcast.
+    public List<string> MoveProjectiles(GameSession session, float deltaMs)
+    {
+        if (session.ActiveProjectiles.Count == 0) return [];
+
+        var log          = new List<string>();
+        float dt         = deltaMs / 1000f;  // convert ms → seconds for distance formula
+        var alivePlayers = session.Players.Where(p => p.Hero.IsAlive).ToList();
+
+        // Iterate over a snapshot so we can safely remove entries mid-loop.
+        foreach (var proj in session.ActiveProjectiles.ToList())
+        {
+            // Move the fireball forward along its fixed direction vector.
+            // Speed * dt gives the distance to travel this tick in pixels.
+            float step = ActiveProjectile.Speed * dt;
+            proj.X += proj.DirX * step;
+            proj.Y += proj.DirY * step;
+            proj.DistanceTravelled += step;
+
+            // Remove the fireball if it has left the room area or exceeded max range.
+            // This prevents it from flying forever if everyone sidesteps it.
+            bool outOfBounds = proj.X < RoomBounds.Left  || proj.X > RoomBounds.Right
+                            || proj.Y < RoomBounds.Top   || proj.Y > RoomBounds.Bottom;
+            if (outOfBounds || proj.DistanceTravelled >= ActiveProjectile.MaxRange)
+            {
+                session.ActiveProjectiles.Remove(proj);
+                continue;
+            }
+
+            // Check every alive player — first one within HitRadius takes the damage.
+            bool hitSomeone = false;
+            foreach (var player in alivePlayers)
+            {
+                float dx   = player.X - proj.X;
+                float dy   = player.Y - proj.Y;
+                float dist = MathF.Sqrt(dx * dx + dy * dy);
+
+                if (dist > ActiveProjectile.HitRadius) continue;  // missed this player
+
+                // Hit! Apply damage and remove the fireball — it can only hit once.
+                // The attacker name covers both boss fireball and Golem arm projectile.
+                log.AddRange(ApplyHit(proj.Damage, proj.AttackerName, player, session, alivePlayers));
+                session.ActiveProjectiles.Remove(proj);
+                hitSomeone = true;
+                break;
+            }
+
+            if (hitSomeone && session.IsGameOver) break;
+        }
+
+        return log;
+    }
+
+    // Applies raw damage from any source to a target player.
+    // Handles the Warrior's Shield Block (halves the hit and clears the flag).
+    // Removes dead players from the alive list and sets IsGameOver if the party wipes.
+    private static List<string> ApplyHit(
+        int rawDmg, string attackerName, PlayerState target, GameSession session, List<PlayerState> alive)
+    {
+        var log = new List<string>();
+
+        // Warrior Shield Block halves the incoming damage — works against fireballs too.
+        if (target.Hero is Warrior w && w.IsBlocking)
+        {
+            rawDmg /= 2;
+            w.ClearBlock();
+            log.Add($"{target.Username} blocks! Hit reduced to {rawDmg}.");
+        }
+
+        var actual = target.Hero.TakeDamage(rawDmg);
+        log.Add($"{attackerName} hits {target.Username} for {actual} dmg!");
+
+        if (!target.Hero.IsAlive)
+        {
+            log.Add($"{target.Username} has fallen!");
+            alive.Remove(target);  // don't hit a corpse again this tick
+            if (!alive.Any())
+            {
+                session.IsGameOver = true;
+                log.Add("The party has been wiped out...");
             }
         }
 
@@ -367,18 +654,41 @@ public class GameService
     {
         var room = session.CurrentRoom;
 
+        var now = DateTime.UtcNow;
         var roomDto = new RoomDto(
             room.Type.ToString(),
-            room.Enemies.Select(e => new EnemyDto(
-                e.Id.ToString(),
-                e.Enemy.Name,
-                e.Enemy.Health,
-                e.Enemy.MaxHealth,
-                e.Enemy.IsAlive,
-                e.X, e.Y           // position so the Phaser scene can place the sprite
-            )).ToList(),
+            room.Enemies.Select(e =>
+            {
+                // Calculate charge progress (0–1) so the frontend can render the charge bar.
+                float chargePercent = 0f;
+                bool  isLaserFiring = false;
+                float laserDirX = 0f, laserDirY = 0f;
+                if (e.Enemy is GolemEnemy)
+                {
+                    if (e.GolemIsCharging && e.GolemChargeStartTime.HasValue)
+                        chargePercent = Math.Clamp(
+                            (float)(now - e.GolemChargeStartTime.Value).TotalMilliseconds
+                            / RoomBounds.GolemChargeDurationMs, 0f, 1f);
+
+                    if (e.GolemLaserFiredTime.HasValue &&
+                        (now - e.GolemLaserFiredTime.Value).TotalMilliseconds < RoomBounds.GolemLaserFiringVisualMs)
+                        isLaserFiring = true;
+
+                    // Always include the aim direction so the frontend can rotate the beam sprite.
+                    laserDirX = e.GolemLaserDirX;
+                    laserDirY = e.GolemLaserDirY;
+                }
+                return new EnemyDto(
+                    e.Id.ToString(), e.Enemy.Name,
+                    e.Enemy.Health, e.Enemy.MaxHealth, e.Enemy.IsAlive,
+                    e.X, e.Y,
+                    chargePercent, isLaserFiring,
+                    laserDirX, laserDirY
+                );
+            }).ToList(),
             room.IsCleared,
-            room.ChestGold
+            room.ChestGold,
+            room.ChestOpenerId
         );
 
         var players = session.Players.Select(p =>
@@ -391,9 +701,15 @@ public class GameService
                 p.Hero.CanUseAbility(), p.Hero.AbilityName,
                 AttackCooldownMs(p.Hero),
                 p.X, p.Y,
-                p.Gold
+                p.Gold,
+                room.HasClaimed(p.UserId)
             );
         }).ToList();
+
+        // Snapshot all in-flight projectile positions so the frontend can place sprites accurately.
+        var activeProjectiles = session.ActiveProjectiles
+            .Select(p => new ActiveProjectileDto(p.Id.ToString(), p.X, p.Y))
+            .ToList();
 
         return new GameStateDto(
             session.SessionId,
@@ -402,38 +718,23 @@ public class GameService
             roomDto, players,
             session.RecentLog.TakeLast(15).ToList(),
             session.IsGameOver,
-            session.IsVictory
+            session.IsVictory,
+            activeProjectiles
         );
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     // Cooldown formula: faster heroes attack more often.
-    // Warrior (Speed 7) → 2 300 ms, Wizard (Speed 10) → 2 000 ms, Archer (Speed 14) → 1 600 ms.
+    // Warrior (Speed 7) → 1 300 ms, Wizard (Speed 10) → 1 000 ms, Archer (Speed 14) → 600 ms.
     public static int AttackCooldownMs(Hero hero) =>
-        Math.Max(800, 3000 - hero.Speed * 100);
+        Math.Max(500, 2000 - hero.Speed * 100);
 
     // Euclidean distance between two 2D points.
     private static float Dist(float x1, float y1, float x2, float y2)
     {
         float dx = x2 - x1, dy = y2 - y1;
         return MathF.Sqrt(dx * dx + dy * dy);
-    }
-
-    // If the current room is a TreasureChest and its guardian was just killed,
-    // opens the chest and distributes gold to every player in the session.
-    // The ChestOpened flag prevents a second payout if this is somehow called twice.
-    private static void TryOpenChest(GameSession session, List<string> log)
-    {
-        var room = session.CurrentRoom;
-        if (room.Type != RoomType.TreasureChest || room.ChestOpened) return;
-
-        room.OpenChest();
-        foreach (var p in session.Players)
-        {
-            p.Gold += room.ChestGold;
-            log.Add($"✦ {p.Username} claims {room.ChestGold} gold from the chest!");
-        }
     }
 
     // Returns the resource bar values for any hero class under a common interface,

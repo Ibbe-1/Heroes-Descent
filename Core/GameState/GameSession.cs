@@ -42,6 +42,12 @@ public class GameSession
     // The AI service checks this and only fires enemy attacks every ~800 ms.
     public DateTime LastEnemyTick { get; set; } = DateTime.UtcNow;
 
+    // Fireballs currently in flight across the room.
+    // Each entry is created when the boss fires and removed when the fireball
+    // either hits a player or travels beyond MaxRange.
+    // Positions are updated every 100 ms tick by GameService.MoveProjectiles.
+    public List<ActiveProjectile> ActiveProjectiles { get; } = [];
+
     public const int MaxPlayers = 4;
 
     // Shortcut so callers don't have to index into the Rooms list every time.

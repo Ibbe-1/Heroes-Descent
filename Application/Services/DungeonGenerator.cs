@@ -25,9 +25,9 @@ public class DungeonGenerator
                 continue;
             }
 
-            // Rooms after index 3 have a 35% chance to be upgraded to "Elite"
-            // (more enemies, harder fight, same XP reward for now).
-            bool isElite = i >= 3 && Random.Shared.Next(100) < 35;
+            // Rooms after index 3 have a 50% chance to be upgraded to "Elite"
+            // (Golem-only encounter — harder than normal but before the boss room).
+            bool isElite = i >= 3 && Random.Shared.Next(100) < 50;
             rooms.Add(MakeRoom(i, isElite ? RoomType.Elite : RoomType.Normal, floorNumber));
         }
 
@@ -38,10 +38,15 @@ public class DungeonGenerator
 
     private static RoomState MakeRoom(int index, RoomType type, int floor)
     {
-        // Elite rooms can have up to 4 enemies; normal rooms up to 3.
-        int maxEnemies = type == RoomType.Elite ? 4 : 3;
-        int count      = Random.Shared.Next(1, maxEnemies + 1);
+        // Elite rooms spawn a single Golem — a tanky MiniBoss, no regular monsters alongside it.
+        // Normal rooms spawn 1-3 random enemies.
+        if (type == RoomType.Elite)
+        {
+            var (gx, gy) = RandomEnemyPosition();
+            return new RoomState(index, type, [new EnemyInstance(new GolemEnemy(floor), gx, gy)]);
+        }
 
+        int count   = Random.Shared.Next(1, 4);
         var enemies = Enumerable.Range(0, count)
             .Select(_ => SpawnEnemy(floor))
             .ToList();
@@ -53,10 +58,16 @@ public class DungeonGenerator
     {
         int gold = Random.Shared.Next(15, 31);
 
+        // 35% chance the chest is a Mimic in disguise — players must defeat it before looting.
+        if (Random.Shared.Next(100) < 35)
+        {
+            var (mx, my) = RandomEnemyPosition();
+            return new RoomState(index, RoomType.TreasureChest, [new EnemyInstance(new Mimic(), mx, my)], gold);
+        }
+
         var guardian = new ChestGuardian();
         if (floor > 1) guardian.ScaleForFloor(floor - 1);
         var (gx, gy) = RandomEnemyPosition();
-
         return new RoomState(index, RoomType.TreasureChest, [new EnemyInstance(guardian, gx, gy)], gold);
     }
 
@@ -70,12 +81,14 @@ public class DungeonGenerator
     // Creates one random enemy, applies floor scaling, and places it at a random position.
     private static EnemyInstance SpawnEnemy(int floor)
     {
-        // Pick one of the three basic enemy types at random.
-        Enemy e = Random.Shared.Next(3) switch
+        // Pick one of the five basic enemy types at random.
+        Enemy e = Random.Shared.Next(5) switch
         {
             0 => new Skeleton(),
             1 => new Goblin(),
-            _ => new Spider(),
+            2 => new Bat(),
+            3 => new Slime(),
+            _ => new Mushroom(),
         };
 
         // Floor scaling: each floor above 1 boosts HP, attack, and defence slightly.

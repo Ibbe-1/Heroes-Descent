@@ -165,8 +165,9 @@ public class GameHub : Hub
     }
 
     // Called when the player presses Q.
-    // Logic differs per hero class — see GameService.PlayerUseAbility.
-    public async Task UseAbility(string sessionId)
+    // dirX/dirY is the normalised aim direction — used by the Archer's Multi-Shot;
+    // ignored by Warrior and Wizard whose abilities are non-directional.
+    public async Task UseAbility(string sessionId, float dirX = 0f, float dirY = 0f)
     {
         var session = _sessions.GetSession(sessionId);
         if (session is null) return;
@@ -177,7 +178,7 @@ public class GameHub : Hub
         lock (session.Lock)
         {
             if (session.IsGameOver || session.IsVictory) return;
-            var (acted, log) = _game.PlayerUseAbility(session, userId);
+            var (acted, log) = _game.PlayerUseAbility(session, userId, dirX, dirY);
             if (!acted) return;
             session.AddLogRange(log);
             dto = _game.BuildDto(session);

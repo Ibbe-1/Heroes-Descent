@@ -1,95 +1,105 @@
-// GameScene.ts — the Phaser 3 game scene that renders the dungeon room.
-//
-// Phaser uses a scene lifecycle with three key methods:
-//   create()  — called once when the scene starts; set up all game objects and input.
-//   update()  — called every frame (~60fps); handle movement, input, and redraw bars.
-//
-// Because React and Phaser run in separate worlds, data flows between them via
-// the Phaser event bus (game.events). React emits events like 'stateUpdate' and
-// Phaser listens for them — no shared variables needed.
-
 import Phaser from 'phaser';
-import type { GameState, EnemyState, PlayerState, RoomState } from '../types/gameTypes';
+import type { GameState, EnemyState, PlayerState, RoomState, ActiveProjectile } from '../types/gameTypes';
 import type { GameEngine } from './gameEngine';
+import { REGION_W, REGION_H } from './MapRegionManager';
 
-// Room bounds — pixel coordinates that must match RoomBounds.cs on the server.
-// The canvas is 960 × 640; the playable room area is inset by 48px on each side.
-// R.CX / R.CY is the center of the room where players spawn.
-const R = { L: 48, R: 912, T: 48, B: 592, W: 864, H: 544, CX: 480, CY: 320 };
+const ATTACK_RANGE = 150;
+const CLASS_RANGE: Record<string, number> = { Warrior: 150, Archer: 600, Wizard: 800 };
+const HIT_RADIUS: Record<string, number> = { Archer: 32, Wizard: 52 };
 
-// Warrior melee attack range (px).
-const ATTACK_RANGE = 120;
-
-// Per-class attack ranges — must match RoomBounds.cs on the server.
-const CLASS_RANGE: Record<string, number> = { Warrior: 120, Archer: 600, Wizard: 800 };
-
-// Projectile hit-box radii shown on the aim line indicator.
-const HIT_RADIUS: Record<string, number> = { Archer: 16, Wizard: 28 };
-
-// Tile size for the checkerboard floor pattern.
-const TILE = 64;
-
-// Rectangle fill colors for each hero class — helps players tell each other apart.
-const CLASS_COLOR: Record<string, number> = {
-  Warrior: 0xe74c3c,  // red
-  Wizard:  0x8e44ad,  // purple
-  Archer:  0x27ae60,  // green
+// Scale chosen so each class renders at roughly 70 px tall on the 960×640 viewport.
+const CLASS_SCALE: Record<string, number> = {
+  Warrior: 0.95,
+  Wizard:  0.6,
+  Archer:  1.0,
 };
 
-// Rectangle fill colors for each enemy type.
-// Bosses are all red because they share the same "danger" cue.
-const ENEMY_COLOR: Record<string, number> = {
-  Skeleton:          0xbdc3c7,
-  Goblin:            0x2ecc71,
-  Spider:            0x6c3483,
-  'Bone Titan':      0xe74c3c,
-  'Ancient Colossus':0xe74c3c,
-  'Dungeon Overlord':0xff0000,
-};
-const BOSS_NAMES = new Set(['Bone Titan', 'Ancient Colossus', 'Dungeon Overlord']);
+const ENEMY_COLOR: Record<string, number> = {};
 
-// Every entity on screen (player or enemy) is represented by a rectangle + text label.
-// Storing both together makes it easy to move or destroy them as a pair.
-interface EntitySprites {
-  body: Phaser.GameObjects.Rectangle;
-  label: Phaser.GameObjects.Text;
+// ── World decorations ──────────────────────────────────────────────────────
+// Torch positions in world-space (origin at (0, 0), world = REGION_W × REGION_H).
+// These are placed on top of whatever map region is currently rendered.
+
+interface HazardZone { x1: number; y1: number; x2: number; y2: number; }
+
+const WORLD_TORCHES: { x: number; y: number }[] = [
+  { x: 100,  y: 80  }, { x: 640,  y: 80  }, { x: 1180, y: 80  },
+  { x: 100,  y: 450 }, { x: 1180, y: 450 },
+  { x: 100,  y: 820 }, { x: 640,  y: 820 }, { x: 1180, y: 820 },
+];
+
+function roomDisplayName(roomType?: string, roomIndex = 0): string {
+  if (roomType === 'Boss')          return 'Boss Sanctum';
+  if (roomType === 'TreasureChest') return 'Treasure Vault';
+  if (roomType === 'Elite')         return 'Elite Chamber';
+  return `Chamber ${roomIndex + 1}`;
 }
 
+// ── Sprite interfaces ───────────────────────────────────────────────────────
+
+// Regular enemies render as coloured rectangles; boss/Golem use animated sprites.
+interface EnemySprite {
+  body:         Phaser.GameObjects.Rectangle | null;
+  sprite:       Phaser.GameObjects.Sprite    | null;
+  // Golem only: the charge orb sprite shown in front of the Golem during wind-up.
+  chargeSprite: Phaser.GameObjects.Sprite    | null;
+  label:        Phaser.GameObjects.Text      | null;
+  prevHp:       number;
+  dead:         boolean;
+  prevX:        number;
+  prevY:        number;
+  animKey:      string;
+  // Tracks whether isLaserFiring was true last tick to detect the firing transition.
+  wasFiring:    boolean;
+}
+
+// Other players are rendered as animated sprites.
+interface OtherSprite {
+  sprite:    Phaser.GameObjects.Sprite;
+  label:     Phaser.GameObjects.Text;
+  heroClass: string;
+  animKey:   string;
+  prevX:     number;
+  prevY:     number;
+  dead:      boolean;
+}
+
+// Animations that block idle/run transitions until they complete.
+const LOCKED_ANIMS = new Set([
+  'warrior-attack', 'warrior-dash', 'warrior-take-hit', 'warrior-death',
+  'wizard-attack1',  'wizard-attack2',  'wizard-hit',     'wizard-death',
+  'archer-attack',   'archer-get-hit',  'archer-death',
+]);
+
 export class GameScene extends Phaser.Scene {
-  // References injected by React via the event bus after the scene is created.
-  private engine: GameEngine | null = null;  // used to send actions to the server
-  private myUserId = '';
+  private engine: GameEngine | null = null;
+  private myUserId   = '';
   private myUsername = '';
 
-  // Latest snapshot received from the server.
-  private state: GameState | null = null;
-  // Tracked to detect when the server moves us to a new room.
-  private lastRoomIndex = -1;
+  private state:         GameState | null = null;
+  private lastRoomIndex     = -1;
+  private regularRoomCount  = 0;
 
-  // Local player position — updated locally at 60fps for smooth movement,
-  // then sent to the server every 50ms so others can see where we are.
-  private localX = R.CX;
-  private localY = R.CY;
-  private readonly SPEED = 220;  // pixels per second
-  private lastPosSent = 0;       // timestamp of last position send
+  private localX = REGION_W / 2;
+  private localY = REGION_H / 2;
+  private levelWidth  = REGION_W;
+  private levelHeight = REGION_H;
+  private readonly SPEED = 220;
+  private lastPosSent   = 0;
+  private lastAttackTime = 0;
 
-  // Phaser game objects for the local player.
-  private myBody!: Phaser.GameObjects.Rectangle;
-  private myLabel!: Phaser.GameObjects.Text;
-  // Semi-transparent circle that shows the player's attack range visually.
-  private rangeCircle!: Phaser.GameObjects.Arc;
-  // Single shared Graphics object redrawn every frame for all HP bars.
-  private hpBars!: Phaser.GameObjects.Graphics;
+  private mySprite!: Phaser.GameObjects.Sprite;
+  private myLabel!:  Phaser.GameObjects.Text;
+  private hpBars!:   Phaser.GameObjects.Graphics;
 
-  // Maps from userId / enemy-id to sprite objects.
-  // Using a Map lets us add/remove individual sprites when players join/leave
-  // or enemies are defeated, without rebuilding the entire scene.
-  private others = new Map<string, EntitySprites>();
-  private enemySprites = new Map<string, EntitySprites & { prevHp: number; dead: boolean }>();
+  private others:           Map<string, OtherSprite> = new Map();
+  private enemySprites:     Map<string, EnemySprite>  = new Map();
+  // Tracks one fireball sprite per active server-side projectile ID.
+  // Entries are added when a new ID appears in state.activeProjectiles and
+  // destroyed (with an impact burst) when the ID disappears.
+  private projectileSprites: Map<string, Phaser.GameObjects.Sprite> = new Map();
 
   // Treasure chest sprite — only present in TreasureChest rooms.
-  // Sits at the top-centre of the room; turns gold and becomes clickable once
-  // the guardian is defeated.
   private chestSprite: {
     body: Phaser.GameObjects.Rectangle;
     label: Phaser.GameObjects.Text;
@@ -97,77 +107,354 @@ export class GameScene extends Phaser.Scene {
   } | null = null;
   private chestIsOpen = false;
 
-  // Hero class of the local player — set from state updates, used for aim visuals.
-  private myHeroClass = '';
+  private myHeroClass    = '';
+  private prevPlayerHp:  Map<string, number> = new Map();
+  private prevMyHp       = -1;
+  private currentAnimKey = '';
+  private aimGraphics!:  Phaser.GameObjects.Graphics;
 
-  // Graphics object redrawn every frame to show the directional aim indicator.
-  private aimGraphics!: Phaser.GameObjects.Graphics;
-
-  // Keyboard keys — registered in create() and polled in update().
-  private kW!: Phaser.Input.Keyboard.Key;
-  private kA!: Phaser.Input.Keyboard.Key;
-  private kS!: Phaser.Input.Keyboard.Key;
-  private kD!: Phaser.Input.Keyboard.Key;
+  private kW!:     Phaser.Input.Keyboard.Key;
+  private kA!:     Phaser.Input.Keyboard.Key;
+  private kS!:     Phaser.Input.Keyboard.Key;
+  private kD!:     Phaser.Input.Keyboard.Key;
   private kSpace!: Phaser.Input.Keyboard.Key;
-  private kQ!: Phaser.Input.Keyboard.Key;
+  private kQ!:     Phaser.Input.Keyboard.Key;
+
+  private roomDecorations: Phaser.GameObjects.GameObject[] = [];
+  // Active hazard zones for the current room — checked every move() tick.
+  private currentHazards: HazardZone[] = [];
 
   constructor() { super({ key: 'GameScene' }); }
 
+  // ── Phaser lifecycle: preload ──────────────────────────────────────────────
+
+  preload() {
+    // Background images — one per room environment, displayed at native resolution.
+    this.load.image('bg-entrance-hall',           '/assets/BackgroundAssets/EntranceHall.png');
+    this.load.image('bg-green-garden',            '/assets/BackgroundAssets/GreenGarden.png');
+    this.load.image('bg-water-canal',             '/assets/BackgroundAssets/WaterCanal.png');
+    this.load.image('bg-lava-maze',               '/assets/BackgroundAssets/LavaMaze.png');
+    this.load.image('bg-library',                 '/assets/BackgroundAssets/Library.png');
+    this.load.image('bg-crystal-cave',            '/assets/BackgroundAssets/CrystalCave.png');
+    this.load.image('bg-armory',                  '/assets/BackgroundAssets/Armory.png');
+    this.load.image('bg-throne-room',             '/assets/BackgroundAssets/ThroneRoom.png');
+    this.load.image('bg-treasury',                '/assets/BackgroundAssets/Treasury.png');
+    this.load.image('bg-demonic-summoning-room',  '/assets/BackgroundAssets/DemonicSummoningRoom.png');
+    this.load.image('bg-boss-room',               '/assets/BackgroundAssets/BossRoom.png');
+    this.load.image('bg-exit-hall',               '/assets/BackgroundAssets/ExitHall.png');
+
+    // Warrior — 140×140 frames
+    this.load.spritesheet('warrior-idle',     '/assets/Warrior/Idle.png',     { frameWidth: 140, frameHeight: 140 });
+    this.load.spritesheet('warrior-run',      '/assets/Warrior/Run.png',      { frameWidth: 140, frameHeight: 140 });
+    this.load.spritesheet('warrior-jump',     '/assets/Warrior/Jump.png',     { frameWidth: 140, frameHeight: 140 });
+    this.load.spritesheet('warrior-fall',     '/assets/Warrior/Fall.png',     { frameWidth: 140, frameHeight: 140 });
+    this.load.spritesheet('warrior-dash',     '/assets/Warrior/Dash.png',     { frameWidth: 140, frameHeight: 140 });
+    this.load.spritesheet('warrior-attack',   '/assets/Warrior/Attack.png',   { frameWidth: 140, frameHeight: 140 });
+    this.load.spritesheet('warrior-take-hit', '/assets/Warrior/Take Hit.png', { frameWidth: 140, frameHeight: 140 });
+    this.load.spritesheet('warrior-death',    '/assets/Warrior/Death.png',    { frameWidth: 140, frameHeight: 140 });
+
+    // Wizard — 231×190 frames
+    this.load.spritesheet('wizard-idle',    '/assets/Wizzard/Idle.png',    { frameWidth: 231, frameHeight: 190 });
+    this.load.spritesheet('wizard-run',     '/assets/Wizzard/Run.png',     { frameWidth: 231, frameHeight: 190 });
+    this.load.spritesheet('wizard-jump',    '/assets/Wizzard/Jump.png',    { frameWidth: 231, frameHeight: 190 });
+    this.load.spritesheet('wizard-fall',    '/assets/Wizzard/Fall.png',    { frameWidth: 231, frameHeight: 190 });
+    this.load.spritesheet('wizard-attack1', '/assets/Wizzard/Attack1.png', { frameWidth: 231, frameHeight: 190 });
+    this.load.spritesheet('wizard-attack2', '/assets/Wizzard/Attack2.png', { frameWidth: 231, frameHeight: 190 });
+    this.load.spritesheet('wizard-hit',     '/assets/Wizzard/Hit.png',     { frameWidth: 231, frameHeight: 190 });
+    this.load.spritesheet('wizard-death',   '/assets/Wizzard/Death.png',   { frameWidth: 231, frameHeight: 190 });
+
+    // Archer — 100×100 frames
+    this.load.spritesheet('archer-idle',    '/assets/Archer/Character/Idle.png',    { frameWidth: 100, frameHeight: 100 });
+    this.load.spritesheet('archer-run',     '/assets/Archer/Character/Run.png',     { frameWidth: 100, frameHeight: 100 });
+    this.load.spritesheet('archer-jump',    '/assets/Archer/Character/Jump.png',    { frameWidth: 100, frameHeight: 100 });
+    this.load.spritesheet('archer-fall',    '/assets/Archer/Character/Fall.png',    { frameWidth: 100, frameHeight: 100 });
+    this.load.spritesheet('archer-attack',  '/assets/Archer/Character/Attack.png',  { frameWidth: 100, frameHeight: 100 });
+    this.load.spritesheet('archer-get-hit', '/assets/Archer/Character/Get Hit.png', { frameWidth: 100, frameHeight: 100 });
+    this.load.spritesheet('archer-death',   '/assets/Archer/Character/Death.png',   { frameWidth: 100, frameHeight: 100 });
+
+    // Dark Mage boss — 250×250 frames
+    this.load.spritesheet('boss-idle',     '/assets/Darkmage/Idle.png',     { frameWidth: 250, frameHeight: 250 });
+    this.load.spritesheet('boss-run',      '/assets/Darkmage/Run.png',      { frameWidth: 250, frameHeight: 250 });
+    this.load.spritesheet('boss-attack',   '/assets/Darkmage/Attack2.png',  { frameWidth: 250, frameHeight: 250 });
+    this.load.spritesheet('boss-take-hit', '/assets/Darkmage/Take hit.png', { frameWidth: 250, frameHeight: 250 });
+    this.load.spritesheet('boss-death',    '/assets/Darkmage/Death.png',    { frameWidth: 250, frameHeight: 250 });
+    this.load.spritesheet('boss-jump',     '/assets/Darkmage/Jump.png',     { frameWidth: 250, frameHeight: 250 });
+    this.load.spritesheet('boss-fall',     '/assets/Darkmage/Fall.png',     { frameWidth: 250, frameHeight: 250 });
+    // Fireball — 128×160, 4 cols × 5 rows of 32×32; purple = row 1 (frames 4–7)
+    this.load.spritesheet('boss-fireball', '/assets/Darkmage/Fireball.png', { frameWidth: 32, frameHeight: 32 });
+
+    // Golem Elite MiniBoss — Character_sheet.png is 1000×1000 (10×10 grid of 100×100 frames)
+    //   Row 0 (frames  0– 3): Idle
+    //   Row 1 (frames 10–17): Walk
+    //   Row 2 (frames 20–28): Attack
+    //   Row 3 (frames 30–37): Hit stagger
+    //   Row 8 (frames 80–83): Death
+    this.load.spritesheet('golem-sheet', '/assets/Golem/Mecha-stone Golem 0.1/PNG sheet/Character_sheet.png', { frameWidth: 100, frameHeight: 100 });
+    // Glowing arm projectile — 300×300 (3×3 grid of 100×100 frames, frames 0–8)
+    this.load.spritesheet('golem-projectile', '/assets/Golem/Mecha-stone Golem 0.1/weapon PNG/arm_projectile_glowing.png', { frameWidth: 100, frameHeight: 100 });
+    // Laser sheet — 300×1500 (1 col × 15 rows of 300×100 frames)
+    //   Frames 0–7:  charge-up orb growing (played as looping wind-up visual)
+    //   Frames 8–14: full laser beam firing (played once when the shot lands)
+    this.load.spritesheet('golem-laser', '/assets/Golem/Mecha-stone Golem 0.1/weapon PNG/Laser_sheet.png', { frameWidth: 300, frameHeight: 100 });
+    // Goblin — 150×150 frames
+    this.load.spritesheet('goblin-attack', '/assets/Goblin/Attack3.png',     { frameWidth: 150, frameHeight: 150 });
+    this.load.spritesheet('goblin-bomb',   '/assets/Goblin/Bomb_sprite.png', { frameWidth: 100, frameHeight: 100 });
+
+    // Skeleton — 150×150 body frames, 92×102 sword projectile frames
+    this.load.spritesheet('skeleton-attack', '/assets/Skeleton/Attack3.png',     { frameWidth: 150, frameHeight: 150 });
+    this.load.spritesheet('skeleton-sword',  '/assets/Skeleton/Sword_sprite.png', { frameWidth: 92,  frameHeight: 102 });
+
+    // Bat — 87×87 frames
+    this.load.spritesheet('bat-fly',         '/assets/Bat/fly.png',         { frameWidth: 87, frameHeight: 87 });
+    this.load.spritesheet('bat-attack',      '/assets/Bat/attack.png',      { frameWidth: 87, frameHeight: 87 });
+    this.load.spritesheet('bat-hurt',        '/assets/Bat/hurt.png',        { frameWidth: 87, frameHeight: 87 });
+    this.load.spritesheet('bat-fly-to-fall', '/assets/Bat/fly-to-fall.png', { frameWidth: 87, frameHeight: 87 });
+    this.load.spritesheet('bat-fall',        '/assets/Bat/fall.png',        { frameWidth: 87, frameHeight: 87 });
+    this.load.spritesheet('bat-death',       '/assets/Bat/death.png',       { frameWidth: 87, frameHeight: 87 });
+
+    // Slime — 156×156 frames
+    this.load.spritesheet('slime-idle',   '/assets/Slime/idle.png',   { frameWidth: 156, frameHeight: 156 });
+    this.load.spritesheet('slime-walk',   '/assets/Slime/walk.png',   { frameWidth: 156, frameHeight: 156 });
+    this.load.spritesheet('slime-attack', '/assets/Slime/attack.png', { frameWidth: 156, frameHeight: 156 });
+    this.load.spritesheet('slime-hurt',   '/assets/Slime/hurt.png',   { frameWidth: 156, frameHeight: 156 });
+    this.load.spritesheet('slime-death',  '/assets/Slime/death.png',  { frameWidth: 156, frameHeight: 156 });
+
+    // Mushroom — 150×150 body frames, 50×50 projectile frames
+    this.load.spritesheet('mushroom-attack',     '/assets/Mushroom/Attack3.png',          { frameWidth: 150, frameHeight: 150 });
+    this.load.spritesheet('mushroom-projectile', '/assets/Mushroom/Projectile_sprite.png', { frameWidth: 50,  frameHeight: 50  });
+
+    // Mimic — 146×146 frames
+    this.load.spritesheet('mimic-idle-closed',    '/assets/Mimic/Idle_closed.png',      { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-opening',         '/assets/Mimic/opening.png',          { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-idle-open',       '/assets/Mimic/idle_open.png',        { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-transform',       '/assets/Mimic/transform.png',        { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-idle-transformed','/assets/Mimic/idle_transformed.png', { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-walk',            '/assets/Mimic/walk.png',             { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-attack-1',        '/assets/Mimic/attack_1.png',         { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-attack-2',        '/assets/Mimic/attack_2.png',         { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-hurt',            '/assets/Mimic/hurt.png',             { frameWidth: 146, frameHeight: 146 });
+    this.load.spritesheet('mimic-death',           '/assets/Mimic/death.png',            { frameWidth: 146, frameHeight: 146 });
+  }
+
   // ── Phaser lifecycle: create ───────────────────────────────────────────────
 
-  // Called once when the scene starts. We draw the room, create sprites,
-  // register input, and start listening for events from React.
   create() {
-    this.drawRoom();
+    this.renderBackground('bg-entrance-hall');
+    this.createWarriorAnims();
+    this.createWizardAnims();
+    this.createArcherAnims();
+    this.createDarkMageAnims();
+    this.createGolemAnims();
+    this.createGoblinAnims();
+    this.createSkeletonAnims();
+    this.createBatAnims();
+    this.createSlimeAnims();
+    this.createMushroomAnims();
+    this.createMimicAnims();
 
-    // HP bars use a shared Graphics object. Every frame we clear() it and
-    // redraw all bars from scratch — simpler than updating many individual objects.
-    this.hpBars = this.add.graphics().setDepth(20);
-
-    // Aim indicator redrawn each frame — shows cone (Warrior) or aim line (Archer/Wizard).
+    this.hpBars      = this.add.graphics().setDepth(20);
     this.aimGraphics = this.add.graphics().setDepth(6);
 
-    // Faint gold circle centered on the player — only visible for Warrior (melee range hint).
-    // Hidden by default; applyState() shows it once hero class is known.
-    this.rangeCircle = this.add.arc(R.CX, R.CY, ATTACK_RANGE, 0, 360, false, 0xc9a84c, 0.07).setDepth(5).setVisible(false);
+    // Placeholder sprite — invisible until class is known so no wrong-class flash.
+    this.mySprite = this.add.sprite(REGION_W / 2, REGION_H / 2, 'warrior-idle', 0)
+      .setDepth(10)
+      .setScale(0.5)
+      .setAlpha(0);
 
-    // The local player's rectangle and name tag. setDepth() controls draw order —
-    // higher values appear on top. Player (10) is above enemies (8) and floor (0).
-    this.myBody = this.add.rectangle(R.CX, R.CY, 30, 30, 0x3498db).setDepth(10);
-    this.myLabel = this.add.text(R.CX, R.CY - 22, '', {
+    this.myLabel = this.add.text(REGION_W / 2, REGION_H / 2 - 45, '', {
       fontFamily: 'Courier New', fontSize: '10px', color: '#ffffff',
     }).setOrigin(0.5, 1).setDepth(11);
 
-    // Register keyboard keys. addKey returns an object we can query each frame.
-    const kb = this.input.keyboard!;
-    this.kW = kb.addKey(Phaser.Input.Keyboard.KeyCodes.W);
-    this.kA = kb.addKey(Phaser.Input.Keyboard.KeyCodes.A);
-    this.kS = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);
-    this.kD = kb.addKey(Phaser.Input.Keyboard.KeyCodes.D);
-    this.kSpace = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
-    this.kQ = kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q);
+    this.cameras.main.startFollow(this.mySprite);
+    this.cameras.main.setBounds(0, 0, this.levelWidth, this.levelHeight);
 
-    // Listen for events emitted by React (via gameRef.current.events.emit).
-    // This is the bridge between the React component tree and the Phaser scene.
-    this.game.events.on('setEngine',   (e: GameEngine) => { this.engine = e; });
-    this.game.events.on('setUserId',   (id: string)    => { this.myUserId = id; });
-    this.game.events.on('setUsername', (n: string)     => {
+    const kb = this.input.keyboard!;
+    // W / A / S / D — move the player up, left, down, right
+    this.kW     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.W);  // move up
+    this.kA     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.A);  // move left
+    this.kS     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);  // move down
+    this.kD     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.D);  // move right
+    this.kSpace = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE); // basic attack toward mouse cursor
+    this.kQ     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q);    // class ability (Warrior: Shield Block, Wizard: Fireball, Archer: Multi-Shot)
+
+    // Stop the browser from intercepting these keys.
+    // Without this, pressing W/S would scroll the page and Space would jump to the bottom.
+    kb.addCapture([
+      Phaser.Input.Keyboard.KeyCodes.W,
+      Phaser.Input.Keyboard.KeyCodes.A,
+      Phaser.Input.Keyboard.KeyCodes.S,
+      Phaser.Input.Keyboard.KeyCodes.D,
+      Phaser.Input.Keyboard.KeyCodes.SPACE,
+      Phaser.Input.Keyboard.KeyCodes.Q,
+    ]);
+
+    this.game.events.on('setEngine',    (e: GameEngine) => { this.engine = e; });
+    this.game.events.on('setUserId',    (id: string)    => {
+      this.myUserId = id;
+      if (this.state) this.applyState(this.state);
+    });
+    this.game.events.on('setUsername',  (n: string)     => {
       this.myUsername = n;
       this.myLabel.setText(n);
     });
-    // Every server broadcast triggers applyState, which syncs all sprites.
-    this.game.events.on('stateUpdate', (s: GameState)  => this.applyState(s));
+    // heroClass is sent by GamePage right after sceneReady fires so the sprite
+    // is visible from the very first update() tick, without waiting for server state.
+    this.game.events.on('setHeroClass', (hc: string)    => {
+      if (hc && this.myHeroClass !== hc) {
+        this.myHeroClass = hc;
+        this.initPlayerSprite(hc);
+      }
+    });
+    this.game.events.on('stateUpdate',  (s: GameState)  => { this.syncProjectiles(s); this.applyState(s); });
 
-    // The canvas must be focused for keyboard events to fire.
-    // tabindex='0' makes a non-focusable element focusable.
     this.game.canvas.setAttribute('tabindex', '0');
     this.game.canvas.focus();
+
+    // Tell GamePage that create() is done and all listeners are live.
+    this.game.events.emit('sceneReady');
+  }
+
+  // ── Animation setup ────────────────────────────────────────────────────────
+
+  private createWarriorAnims() {
+    const a = this.anims;
+    a.create({ key: 'warrior-idle',     frames: a.generateFrameNumbers('warrior-idle',     { start: 0, end: 10 }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'warrior-run',      frames: a.generateFrameNumbers('warrior-run',      { start: 0, end: 7  }), frameRate: 10, repeat: -1 });
+    a.create({ key: 'warrior-jump',     frames: a.generateFrameNumbers('warrior-jump',     { start: 0, end: 3  }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'warrior-fall',     frames: a.generateFrameNumbers('warrior-fall',     { start: 0, end: 3  }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'warrior-dash',     frames: a.generateFrameNumbers('warrior-dash',     { start: 0, end: 3  }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'warrior-attack',   frames: a.generateFrameNumbers('warrior-attack',   { start: 0, end: 5  }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'warrior-take-hit', frames: a.generateFrameNumbers('warrior-take-hit', { start: 0, end: 3  }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'warrior-death',    frames: a.generateFrameNumbers('warrior-death',    { start: 0, end: 8  }), frameRate: 8,  repeat: 0  });
+  }
+
+  private createWizardAnims() {
+    const a = this.anims;
+    a.create({ key: 'wizard-idle',    frames: a.generateFrameNumbers('wizard-idle',    { start: 0, end: 5 }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'wizard-run',     frames: a.generateFrameNumbers('wizard-run',     { start: 0, end: 7 }), frameRate: 10, repeat: -1 });
+    a.create({ key: 'wizard-jump',    frames: a.generateFrameNumbers('wizard-jump',    { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'wizard-fall',    frames: a.generateFrameNumbers('wizard-fall',    { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'wizard-attack1', frames: a.generateFrameNumbers('wizard-attack1', { start: 0, end: 7 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'wizard-attack2', frames: a.generateFrameNumbers('wizard-attack2', { start: 0, end: 7 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'wizard-hit',     frames: a.generateFrameNumbers('wizard-hit',     { start: 0, end: 3 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'wizard-death',   frames: a.generateFrameNumbers('wizard-death',   { start: 0, end: 6 }), frameRate: 8,  repeat: 0  });
+  }
+
+  private createArcherAnims() {
+    const a = this.anims;
+    a.create({ key: 'archer-idle',    frames: a.generateFrameNumbers('archer-idle',    { start: 0, end: 9 }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'archer-run',     frames: a.generateFrameNumbers('archer-run',     { start: 0, end: 7 }), frameRate: 10, repeat: -1 });
+    a.create({ key: 'archer-jump',    frames: a.generateFrameNumbers('archer-jump',    { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'archer-fall',    frames: a.generateFrameNumbers('archer-fall',    { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'archer-attack',  frames: a.generateFrameNumbers('archer-attack',  { start: 0, end: 5 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'archer-get-hit', frames: a.generateFrameNumbers('archer-get-hit', { start: 0, end: 2 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'archer-death',   frames: a.generateFrameNumbers('archer-death',   { start: 0, end: 9 }), frameRate: 8,  repeat: 0  });
+  }
+
+  private createDarkMageAnims() {
+    const a = this.anims;
+    a.create({ key: 'boss-idle',     frames: a.generateFrameNumbers('boss-idle',     { start: 0, end: 7 }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'boss-run',      frames: a.generateFrameNumbers('boss-run',      { start: 0, end: 7 }), frameRate: 10, repeat: -1 });
+    a.create({ key: 'boss-attack',   frames: a.generateFrameNumbers('boss-attack',   { start: 0, end: 7 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'boss-take-hit', frames: a.generateFrameNumbers('boss-take-hit', { start: 0, end: 2 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'boss-death',    frames: a.generateFrameNumbers('boss-death',    { start: 0, end: 6 }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'boss-jump',     frames: a.generateFrameNumbers('boss-jump',     { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'boss-fall',     frames: a.generateFrameNumbers('boss-fall',     { start: 0, end: 1 }), frameRate: 8,  repeat: 0  });
+    // Purple fireball — row 1 of the shared sheet (frames 4–7)
+    a.create({ key: 'boss-fireball', frames: a.generateFrameNumbers('boss-fireball', { start: 4, end: 7 }), frameRate: 10, repeat: -1 });
+  }
+
+  private createGolemAnims() {
+    const a = this.anims;
+    // Character_sheet.png is a 10×10 grid of 100×100 frames.
+    // Row index N starts at frame N*10.
+    //   Row 0 (frames  0– 3): Idle loop — stone golem breathing/glowing
+    //   Row 1 (frames 10–17): Walk — heavy plodding movement
+    //   Row 2 (frames 20–28): Attack — arm-slam or punch animation
+    //   Row 3 (frames 30–37): Hit stagger — recoils when damaged
+    //   Row 8 (frames 80–83): Death — crumbles to the ground
+    a.create({ key: 'golem-idle',     frames: a.generateFrameNumbers('golem-sheet', { start:  0, end:  3 }), frameRate: 6,  repeat: -1 });
+    a.create({ key: 'golem-run',      frames: a.generateFrameNumbers('golem-sheet', { start: 10, end: 17 }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'golem-attack',   frames: a.generateFrameNumbers('golem-sheet', { start: 20, end: 28 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'golem-take-hit', frames: a.generateFrameNumbers('golem-sheet', { start: 30, end: 37 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'golem-death',    frames: a.generateFrameNumbers('golem-sheet', { start: 80, end: 83 }), frameRate: 8,  repeat: 0  });
+    // Glowing arm projectile — arm_projectile_glowing.png is a 3×3 grid of 100×100 frames (0–8)
+    a.create({ key: 'golem-projectile', frames: a.generateFrameNumbers('golem-projectile', { start: 0, end: 8 }), frameRate: 10, repeat: -1 });
+    // Laser charge wind-up — orb growing (frames 0–7, loops while chargePercent is rising)
+    a.create({ key: 'golem-laser-charge', frames: a.generateFrameNumbers('golem-laser', { start: 0, end: 7 }), frameRate: 8, repeat: -1 });
+    // Laser beam fire — full beam extending (frames 8–14, play once when the shot lands)
+    a.create({ key: 'golem-laser-fire', frames: a.generateFrameNumbers('golem-laser', { start: 8, end: 14 }), frameRate: 12, repeat: 0 });
+  }
+
+  private createGoblinAnims() {
+    const a = this.anims;
+    a.create({ key: 'goblin-attack', frames: a.generateFrameNumbers('goblin-attack', { start: 0, end: 11 }), frameRate: 10, repeat: 0 });
+    a.create({ key: 'goblin-bomb',   frames: a.generateFrameNumbers('goblin-bomb',   { start: 0, end: 18 }), frameRate: 14, repeat: 0  });
+  }
+
+  private createSkeletonAnims() {
+    const a = this.anims;
+    a.create({ key: 'skeleton-attack', frames: a.generateFrameNumbers('skeleton-attack', { start: 0, end: 5 }), frameRate: 10, repeat: 0 });
+    a.create({ key: 'skeleton-sword',  frames: a.generateFrameNumbers('skeleton-sword',  { start: 0, end: 7 }), frameRate: 16, repeat: -1 });
+  }
+
+  private createBatAnims() {
+    const a = this.anims;
+    a.create({ key: 'bat-fly',         frames: a.generateFrameNumbers('bat-fly',         { start: 0, end: 10 }), frameRate: 10, repeat: -1 });
+    a.create({ key: 'bat-attack',      frames: a.generateFrameNumbers('bat-attack',      { start: 0, end: 10 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'bat-hurt',        frames: a.generateFrameNumbers('bat-hurt',        { start: 0, end: 2  }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'bat-fly-to-fall', frames: a.generateFrameNumbers('bat-fly-to-fall', { start: 0, end: 2  }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'bat-fall',        frames: a.generateFrameNumbers('bat-fall',        { start: 0, end: 4  }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'bat-death',       frames: a.generateFrameNumbers('bat-death',       { start: 0, end: 3  }), frameRate: 8,  repeat: 0  });
+  }
+
+  private createSlimeAnims() {
+    const a = this.anims;
+    a.create({ key: 'slime-idle',   frames: a.generateFrameNumbers('slime-idle',   { start: 0, end: 13 }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'slime-walk',   frames: a.generateFrameNumbers('slime-walk',   { start: 0, end: 5  }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'slime-attack', frames: a.generateFrameNumbers('slime-attack', { start: 0, end: 18 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'slime-hurt',   frames: a.generateFrameNumbers('slime-hurt',   { start: 0, end: 2  }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'slime-death',  frames: a.generateFrameNumbers('slime-death',  { start: 0, end: 10 }), frameRate: 8,  repeat: 0  });
+  }
+
+  private createMushroomAnims() {
+    const a = this.anims;
+    a.create({ key: 'mushroom-attack',     frames: a.generateFrameNumbers('mushroom-attack',     { start: 0, end: 10 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'mushroom-projectile', frames: a.generateFrameNumbers('mushroom-projectile', { start: 0, end: 7  }), frameRate: 12, repeat: -1 });
+  }
+
+  private createMimicAnims() {
+    const a = this.anims;
+    a.create({ key: 'mimic-idle-closed',     frames: a.generateFrameNumbers('mimic-idle-closed',     { start: 0, end: 0  }), frameRate: 1,  repeat: -1 });
+    a.create({ key: 'mimic-opening',          frames: a.generateFrameNumbers('mimic-opening',          { start: 0, end: 5  }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'mimic-idle-open',        frames: a.generateFrameNumbers('mimic-idle-open',        { start: 0, end: 0  }), frameRate: 1,  repeat: -1 });
+    a.create({ key: 'mimic-transform',        frames: a.generateFrameNumbers('mimic-transform',        { start: 0, end: 6  }), frameRate: 8,  repeat: 0  });
+    a.create({ key: 'mimic-idle-transformed', frames: a.generateFrameNumbers('mimic-idle-transformed', { start: 0, end: 8  }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'mimic-walk',             frames: a.generateFrameNumbers('mimic-walk',             { start: 0, end: 5  }), frameRate: 8,  repeat: -1 });
+    a.create({ key: 'mimic-attack-1',         frames: a.generateFrameNumbers('mimic-attack-1',         { start: 0, end: 13 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'mimic-attack-2',         frames: a.generateFrameNumbers('mimic-attack-2',         { start: 0, end: 12 }), frameRate: 12, repeat: 0  });
+    a.create({ key: 'mimic-hurt',             frames: a.generateFrameNumbers('mimic-hurt',             { start: 0, end: 2  }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'mimic-death',            frames: a.generateFrameNumbers('mimic-death',            { start: 0, end: 5  }), frameRate: 8,  repeat: 0  });
+  }
+
+  private initPlayerSprite(heroClass: string) {
+    this.mySprite.anims.stop();
+    this.currentAnimKey = '';
+
+    const prefix = heroClass.toLowerCase();
+    const scale  = CLASS_SCALE[heroClass] ?? 0.5;
+    this.mySprite.setTexture(`${prefix}-idle`, 0).setScale(scale).setAlpha(1);
+    this.playAnim(`${prefix}-idle`);
+  }
+
+  private playAnim(key: string) {
+    if (this.currentAnimKey === key) return;
+    this.currentAnimKey = key;
+    this.mySprite.play(key);
   }
 
   // ── Phaser lifecycle: update ───────────────────────────────────────────────
 
-  // Called every frame. delta is milliseconds since the last frame (~16ms at 60fps).
-  // All movement uses delta-time so the game speed is framerate-independent.
   update(_time: number, delta: number) {
     this.move(delta);
     this.sendPos(_time);
@@ -176,33 +463,57 @@ export class GameScene extends Phaser.Scene {
     this.drawAim();
   }
 
-  // ── Input ─────────────────────────────────────────────────────────────────
+  // ── Movement ───────────────────────────────────────────────────────────────
 
-  // Move the local player based on which WASD keys are held down.
   private move(delta: number) {
-    const s = this.SPEED * (delta / 1000);  // convert to pixels this frame
+    // Convert speed from px/sec to px/frame using the actual elapsed time.
+    const s = this.SPEED * (delta / 1000);
     let dx = 0, dy = 0;
-    if (this.kW.isDown) dy -= s;
-    if (this.kS.isDown) dy += s;
-    if (this.kA.isDown) dx -= s;
-    if (this.kD.isDown) dx += s;
+    if (this.kW.isDown) dy -= s; // W → move up
+    if (this.kS.isDown) dy += s; // S → move down
+    if (this.kA.isDown) dx -= s; // A → move left
+    if (this.kD.isDown) dx += s; // D → move right
 
-    // Normalise diagonal movement so moving at 45° isn't faster than cardinal.
-    // 0.707 ≈ 1/√2 — the length of a unit diagonal vector.
+    // Diagonal movement would be faster (√2 ≈ 1.41×) without this normalisation.
+    // Multiplying by 0.707 (1/√2) keeps diagonal speed equal to cardinal speed.
     if (dx && dy) { dx *= 0.707; dy *= 0.707; }
 
-    // Clamp to keep the player inside the room walls.
-    this.localX = Phaser.Math.Clamp(this.localX + dx, R.L + 16, R.R - 16);
-    this.localY = Phaser.Math.Clamp(this.localY + dy, R.T + 16, R.B - 16);
+    const pad  = 32;
+    const newX = Phaser.Math.Clamp(this.localX + dx, pad, this.levelWidth  - pad);
+    const newY = Phaser.Math.Clamp(this.localY + dy, pad, this.levelHeight - pad);
 
-    // Move all objects that track the player's position.
-    this.myBody.setPosition(this.localX, this.localY);
-    this.myLabel.setPosition(this.localX, this.localY - 22);
-    this.rangeCircle.setPosition(this.localX, this.localY);
+    // Hazard collision — try full move, then axis-only fallbacks.
+    if (!this.inHazard(newX, newY)) {
+      this.localX = newX;
+      this.localY = newY;
+    } else if (!this.inHazard(newX, this.localY)) {
+      this.localX = newX;
+    } else if (!this.inHazard(this.localX, newY)) {
+      this.localY = newY;
+    }
+    // else: both axes blocked — position unchanged.
+
+    this.mySprite.setPosition(this.localX, this.localY);
+    const labelY = this.localY - this.mySprite.displayHeight / 2 - 10;
+    this.myLabel.setPosition(this.localX, labelY);
+
+    if (this.myHeroClass) {
+      if (dx < 0) this.mySprite.setFlipX(true);
+      else if (dx > 0) this.mySprite.setFlipX(false);
+
+      if (!LOCKED_ANIMS.has(this.currentAnimKey)) {
+        const moving = dx !== 0 || dy !== 0;
+        const prefix = this.myHeroClass.toLowerCase();
+        this.playAnim(moving ? `${prefix}-run` : `${prefix}-idle`);
+      }
+    }
   }
 
-  // Throttle position sends to every 50ms (20 updates/sec) to avoid flooding
-  // the server. The server rebroadcasts positions at 10fps via EnemyAiService.
+  // Returns true if the point (x, y) lies inside any hazard zone for the current room.
+  private inHazard(x: number, y: number): boolean {
+    return this.currentHazards.some(h => x > h.x1 && x < h.x2 && y > h.y1 && y < h.y2);
+  }
+
   private sendPos(time: number) {
     if (time - this.lastPosSent > 50 && this.engine) {
       this.engine.sendPosition(this.localX, this.localY);
@@ -210,249 +521,811 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  // Check for one-shot key presses (JustDown = true only on the frame the key
-  // goes from up to down, not while held). This prevents holding SPACE from
-  // spamming attacks faster than the server cooldown allows.
+  // ── Input ──────────────────────────────────────────────────────────────────
+
   private handleInput() {
-    if (!this.engine || !this.state) return;
+    if (!this.engine || !this.state || !this.myHeroClass) return;
+
     if (Phaser.Input.Keyboard.JustDown(this.kSpace)) {
+      const me = this.state.players.find(p => p.userId === this.myUserId);
+      const cooldownMs = me?.attackCooldownMs ?? 2000;
+      const now = Date.now();
+      if (now - this.lastAttackTime < cooldownMs) return;
+
       const ptr = this.input.activePointer;
       const dx = ptr.worldX - this.localX;
       const dy = ptr.worldY - this.localY;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > 0) {
-        const nx = dx / dist;
-        const ny = dy / dist;
+      const nx = dist > 0 ? dx / dist : 0;
+      const ny = dist > 0 ? dy / dist : -1;
+
+      if (this.myHeroClass === 'Warrior') {
+        this.lastAttackTime = now;
+        this.engine.attackNearest();
+        this.flashAttack(nx, ny, ATTACK_RANGE);
+      } else if (dist > 0) {
         const maxRange = CLASS_RANGE[this.myHeroClass] ?? ATTACK_RANGE;
-        // Travel to cursor position, capped at class max range.
-        const aimDist = Math.min(dist, maxRange);
+        this.lastAttackTime = now;
         this.engine.attackDirectional(nx, ny);
-        this.flashAttack(nx, ny, aimDist);
+        this.flashAttack(nx, ny, Math.min(dist, maxRange));
       }
     }
+
     if (Phaser.Input.Keyboard.JustDown(this.kQ)) {
-      this.engine.useAbility();
+      const me = this.state.players.find(p => p.userId === this.myUserId);
+      if (!me?.canUseAbility) return;
+      const ptr = this.input.activePointer;
+      const dx = ptr.worldX - this.localX;
+      const dy = ptr.worldY - this.localY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const nx = dist > 0 ? dx / dist : 0;
+      const ny = dist > 0 ? dy / dist : -1;
+      this.engine.useAbility(nx, ny);
+      this.flashAbility(nx, ny);
     }
   }
 
-  // ── State update from server ──────────────────────────────────────────────
+  // ── State sync ─────────────────────────────────────────────────────────────
 
-  // Called every time the server sends a GameStateUpdate message.
-  // We reconcile the server snapshot with the current Phaser objects:
-  // create new sprites for new entities, update existing ones, destroy removed ones.
   private applyState(s: GameState) {
-    // Room changed → destroy all enemy sprites and snap player to their new spawn.
-    // The server teleports players to spawn points when MoveToNextRoom is called.
     if (s.currentRoomIndex !== this.lastRoomIndex) {
       this.lastRoomIndex = s.currentRoomIndex;
       this.clearEnemies();
       this.destroyChest();
+      this.clearProjectiles();  // discard any fireballs still in flight from the previous room
+      this.clearRoomVisuals();
+      this.renderBackground(this.backgroundKeyForRoom(s.currentRoomIndex, s.currentRoom.type));
+      this.showRoomBanner(s.currentRoomIndex, s.currentRoom.type);
+      this.prevPlayerHp.clear();
       const me = s.players.find(p => p.userId === this.myUserId);
       if (me) { this.localX = me.x; this.localY = me.y; }
     }
 
+    this.showEnemyAttacks(s);
     this.state = s;
 
-    // Tint the local player's rectangle to match their hero class.
-    // Turn grey if dead so the player can see they're out of the fight.
+    if (this.myUserId) this.destroyOther(this.myUserId);
+
+    // ── Local player ──
     const me = s.players.find(p => p.userId === this.myUserId);
     if (me) {
+      const prevClass = this.myHeroClass;
       this.myHeroClass = me.heroClass;
-      const col = CLASS_COLOR[me.heroClass] ?? 0x3498db;
-      this.myBody.setFillStyle(me.isAlive ? col : 0x555555);
-      // Range circle only makes sense for Warrior (melee) — ranged classes get the aim line.
-      this.rangeCircle.setVisible(me.heroClass === 'Warrior' && me.isAlive);
+
+      if (this.myHeroClass && this.myHeroClass !== prevClass) {
+        this.initPlayerSprite(this.myHeroClass);
+      }
+
+      const prefix  = this.myHeroClass.toLowerCase();
+      const hitKey  = this.myHeroClass === 'Archer' ? 'archer-get-hit'
+                    : this.myHeroClass === 'Wizard'  ? 'wizard-hit'
+                    : 'warrior-take-hit';
+      const deathKey = `${prefix}-death`;
+
+      if (!me.isAlive) {
+        if (this.currentAnimKey !== deathKey) {
+          this.currentAnimKey = deathKey;
+          this.mySprite.play(deathKey);
+        }
+        this.mySprite.setAlpha(0.7);
+      } else {
+        this.mySprite.setAlpha(1);
+        if (this.prevMyHp > 0 && me.currentHp < this.prevMyHp && !LOCKED_ANIMS.has(this.currentAnimKey)) {
+          this.currentAnimKey = hitKey;
+          this.mySprite.play(hitKey);
+          this.mySprite.once('animationcomplete', () => {
+            if (this.currentAnimKey === hitKey) {
+              const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
+              this.playAnim(moving ? `${prefix}-run` : `${prefix}-idle`);
+            }
+          });
+        }
+      }
+      this.prevMyHp = me.currentHp;
     }
 
-    // Sync other players: create sprites for new arrivals, update positions,
-    // destroy sprites for players who disconnected.
+    // ── Other players ──
     const myId = this.myUserId;
-    for (const p of s.players.filter(pl => pl.userId !== myId)) {
-      this.syncOther(p);
+    for (const p of s.players) {
+      if (p.userId !== myId) this.syncOther(p);
     }
     for (const [id] of this.others) {
-      if (!s.players.some(p => p.userId === id)) this.destroyOther(id);
+      if (!s.players.some(p => p.userId === id) || id === myId) this.destroyOther(id);
     }
 
-    // Sync enemies: create sprites for new enemies, update positions and
-    // play death animations, destroy sprites no longer in the room.
+    // ── Enemies ──
     for (const e of s.currentRoom.enemies) this.syncEnemy(e);
     for (const [id] of this.enemySprites) {
       if (!s.currentRoom.enemies.some(e => e.id === id)) this.destroyEnemy(id);
     }
 
-    this.syncChest(s.currentRoom);
+    this.syncChest(s.currentRoom, me);
   }
 
-  // Create or update the sprite for another player (not the local user).
+  // ── Other-player sprites ───────────────────────────────────────────────────
+
   private syncOther(p: PlayerState) {
+    if (p.userId === this.myUserId) return;
+
     let sp = this.others.get(p.userId);
+
     if (!sp) {
-      // First time seeing this player — create their rectangle and name tag.
-      const col = CLASS_COLOR[p.heroClass] ?? 0xffffff;
-      const body = this.add.rectangle(p.x, p.y, 28, 28, col).setDepth(9).setAlpha(0.85);
-      const label = this.add.text(p.x, p.y - 20, p.username, {
+      const prefix = p.heroClass.toLowerCase();
+      const scale  = CLASS_SCALE[p.heroClass] ?? 0.5;
+      const sprite = this.add.sprite(p.x, p.y, `${prefix}-idle`, 0)
+        .setDepth(9)
+        .setScale(scale)
+        .setAlpha(0.9);
+      sprite.play(`${prefix}-idle`);
+
+      const label = this.add.text(p.x, p.y - 45, p.username, {
         fontFamily: 'Courier New', fontSize: '10px', color: '#cccccc',
       }).setOrigin(0.5, 1).setDepth(10);
-      sp = { body, label };
+
+      sp = {
+        sprite, label,
+        heroClass: p.heroClass,
+        animKey:   `${prefix}-idle`,
+        prevX: p.x, prevY: p.y,
+        dead:  false,
+      };
       this.others.set(p.userId, sp);
     }
-    // Move to their latest server position and dim if dead.
-    sp.body.setPosition(p.x, p.y).setAlpha(p.isAlive ? 0.85 : 0.25);
-    sp.label.setPosition(p.x, p.y - 20);
-  }
 
-  // Create or update the sprite for one enemy.
-  private syncEnemy(e: EnemyState) {
-    let sp = this.enemySprites.get(e.id);
-    if (!sp) {
-      // Bosses are larger (40px vs 28px) so they stand out visually.
-      const isBoss = BOSS_NAMES.has(e.name);
-      const size = isBoss ? 40 : 28;
-      const col = ENEMY_COLOR[e.name] ?? 0xff4444;
-      const body = this.add.rectangle(e.x, e.y, size, size, col).setDepth(8);
-      const label = this.add.text(e.x, e.y - (size / 2 + 6), e.name, {
-        fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
-      }).setOrigin(0.5, 1).setDepth(9);
-      // prevHp tracks the last known HP so we can detect when the enemy was hit.
-      sp = { body, label, prevHp: e.health, dead: false };
-      this.enemySprites.set(e.id, sp);
-    }
-
-    if (!e.isAlive && !sp.dead) {
-      // Play death animation: fade out and rotate 90° over 350ms.
-      // The onComplete callback hides the object after the tween finishes
-      // (destroyed properly in destroyEnemy when the server stops sending it).
+    if (!p.isAlive && !sp.dead) {
       sp.dead = true;
-      this.tweens.add({
-        targets: [sp.body, sp.label],
-        alpha: 0, angle: 90, duration: 350,
-        onComplete: () => { sp!.body.setVisible(false); sp!.label.setVisible(false); },
-      });
-    } else if (e.isAlive) {
-      // Move to latest server position.
-      sp.body.setPosition(e.x, e.y);
-      sp.label.setPosition(e.x, e.y - (sp.body.height / 2 + 6));
+      const deathKey = `${sp.heroClass.toLowerCase()}-death`;
+      sp.animKey = deathKey;
+      sp.sprite.play(deathKey);
+      sp.sprite.once('animationcomplete', () => { sp!.sprite.setAlpha(0.3); });
+      sp.label.setAlpha(0.3);
 
-      // Flash the sprite when health decreases — gives hit feedback without sounds.
-      if (e.health < sp.prevHp) {
-        this.tweens.add({
-          targets: sp.body, alpha: 0.2, duration: 80, yoyo: true, repeat: 1,
-          onComplete: () => sp!.body.setAlpha(1),
-        });
+    } else if (p.isAlive) {
+      sp.sprite.setPosition(p.x, p.y).setAlpha(0.9);
+      const labelY = p.y - sp.sprite.displayHeight / 2 - 10;
+      sp.label.setPosition(p.x, labelY).setAlpha(1);
+
+      const mdx = p.x - sp.prevX;
+      if (mdx < -1)      sp.sprite.setFlipX(true);
+      else if (mdx > 1)  sp.sprite.setFlipX(false);
+
+      if (!sp.dead) {
+        const moving  = Math.abs(p.x - sp.prevX) > 1 || Math.abs(p.y - sp.prevY) > 1;
+        const prefix  = sp.heroClass.toLowerCase();
+        const wantKey = moving ? `${prefix}-run` : `${prefix}-idle`;
+        if (sp.animKey !== wantKey) {
+          sp.animKey = wantKey;
+          sp.sprite.play(wantKey);
+        }
       }
     }
+
+    sp.prevX = p.x;
+    sp.prevY = p.y;
+  }
+
+  // ── Enemy sprites ──────────────────────────────────────────────────────────
+
+  private syncEnemy(e: EnemyState) {
+    let sp = this.enemySprites.get(e.id);
+
+    if (!sp) {
+      let isNewMimic = false;
+      if (e.name === 'Dark Mage') {
+        // Dark Mage boss — animated sprite, 240 px rendered (scale 0.96 on 250 px frames)
+        const spr = this.add.sprite(e.x, e.y, 'boss-idle', 0).setDepth(8).setScale(0.96);
+        spr.play('boss-idle');
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 22, 'Dark Mage', {
+          fontFamily: 'Courier New', fontSize: '10px', color: '#ffffff',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, chargeSprite: null, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'boss-idle', wasFiring: false };
+
+      } else if (e.name === 'Golem') {
+        // Golem Elite MiniBoss — animated sprite using Character_sheet.png (100×100 frames)
+        // Scale 1.4 renders the Golem at ~140 px tall, slightly bigger than regular enemies.
+        const spr = this.add.sprite(e.x, e.y, 'golem-sheet', 0).setDepth(8).setScale(1.4);
+        spr.play('golem-idle');
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 10, 'Golem', {
+          fontFamily: 'Courier New', fontSize: '10px', color: '#aabbcc',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, chargeSprite: null, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'golem-idle', wasFiring: false };
+
+      } else if (e.name === 'Goblin') {
+        const spr = this.add.sprite(e.x, e.y, 'goblin-attack', 0).setDepth(8).setScale(0.95);
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Goblin', {
+          fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '' };
+
+      } else if (e.name === 'Skeleton') {
+        const spr = this.add.sprite(e.x, e.y, 'skeleton-attack', 0).setDepth(8).setScale(0.95);
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Skeleton', {
+          fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '' };
+
+      } else if (e.name === 'Bat') {
+        const spr = this.add.sprite(e.x, e.y, 'bat-fly', 0).setDepth(8).setScale(1.3);
+        spr.play('bat-fly');
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Bat', {
+          fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'bat-fly' };
+
+      } else if (e.name === 'Slime') {
+        const spr = this.add.sprite(e.x, e.y, 'slime-idle', 0).setDepth(8).setScale(1.1);
+        spr.play('slime-idle');
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Slime', {
+          fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'slime-idle' };
+
+      } else if (e.name === 'Mushroom') {
+        const spr = this.add.sprite(e.x, e.y, 'mushroom-attack', 0).setDepth(8).setScale(1.0);
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, 'Mushroom', {
+          fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '' };
+
+      } else if (e.name === 'Mimic') {
+        const spr = this.add.sprite(e.x, e.y, 'mimic-idle-closed', 0).setDepth(8).setScale(1.1);
+        spr.play('mimic-idle-closed');
+        const lbl = this.add.text(e.x, e.y - spr.displayHeight / 2 - 6, '???', {
+          fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body: null, sprite: spr, label: lbl, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: 'mimic-idle-closed' };
+        isNewMimic = true;
+
+      } else {
+        // Regular enemies (Skeleton, Goblin, Spider) — coloured rectangle
+        const size  = 28;
+        const col   = ENEMY_COLOR[e.name] ?? 0xff4444;
+        const body  = this.add.rectangle(e.x, e.y, size, size, col).setDepth(8);
+        const label = this.add.text(e.x, e.y - (size / 2 + 6), e.name, {
+          fontFamily: 'Courier New', fontSize: '9px', color: '#dddddd',
+        }).setOrigin(0.5, 1).setDepth(9);
+        sp = { body, sprite: null, chargeSprite: null, label, prevHp: e.health, dead: false, prevX: e.x, prevY: e.y, animKey: '', wasFiring: false };
+      }
+      this.enemySprites.set(e.id, sp);
+      if (isNewMimic) this.startMimicReveal(sp!);
+    }
+
+    // ── Death ──
+    if (!e.isAlive && !sp.dead) {
+      sp.dead = true;
+      // Destroy any active charge orb when the Golem dies.
+      sp.chargeSprite?.destroy();
+      sp.chargeSprite = null;
+      sp.label?.setAlpha(0);
+      if (e.name === 'Golem' && sp.sprite) {
+        sp.animKey = 'golem-death';
+        sp.sprite.play('golem-death');
+      }
+
+      if (e.name === 'Dark Mage' && sp.sprite) {
+        sp.animKey = 'boss-death';
+        sp.sprite.play('boss-death');
+        sp.sprite.once('animationcomplete', () => {
+          this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 500, onComplete: () => sp!.sprite?.setVisible(false) });
+        });
+
+      } else if (e.name === 'Bat' && sp.sprite) {
+        sp.animKey = 'bat-fly-to-fall';
+        sp.sprite.play('bat-fly-to-fall');
+        sp.sprite.once('animationcomplete', () => {
+          sp!.animKey = 'bat-fall';
+          sp!.sprite?.play('bat-fall');
+          sp!.sprite?.once('animationcomplete', () => {
+            this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 300, onComplete: () => sp!.sprite?.setVisible(false) });
+          });
+        });
+
+      } else if (e.name === 'Slime' && sp.sprite) {
+        sp.animKey = 'slime-death';
+        sp.sprite.play('slime-death');
+        sp.sprite.once('animationcomplete', () => {
+          this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 300, onComplete: () => sp!.sprite?.setVisible(false) });
+        });
+
+      } else if (e.name === 'Mimic' && sp.sprite) {
+        sp.animKey = 'mimic-death';
+        sp.sprite.play('mimic-death');
+        sp.sprite.once('animationcomplete', () => {
+          this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 300, onComplete: () => sp!.sprite?.setVisible(false) });
+        });
+
+      } else if (sp.sprite) {
+        // Goblin / Skeleton / Mushroom: fade out (no dedicated death animation provided)
+        this.tweens.add({
+          targets: sp.sprite, alpha: 0, duration: 400,
+          onComplete: () => sp!.sprite?.setVisible(false),
+        });
+
+      } else if (sp.body) {
+        this.tweens.add({
+          targets: [sp.body, sp.label],
+          alpha: 0, angle: 90, duration: 350,
+          onComplete: () => { sp!.body?.setVisible(false); sp!.label?.setVisible(false); },
+        });
+      }
+
+    // ── Alive: update position and animations ──
+    } else if (e.isAlive) {
+      if (sp.sprite) {
+        // Pick animation keys based on whether this is the Golem or the Dark Mage.
+        const isGolem   = e.name === 'Golem';
+        const idleKey   = isGolem ? 'golem-idle'     : 'boss-idle';
+        const runKey    = isGolem ? 'golem-run'      : 'boss-run';
+        const hitKey    = isGolem ? 'golem-take-hit' : 'boss-take-hit';
+        const attackKey = isGolem ? 'golem-attack'   : 'boss-attack';
+        const deathKey  = isGolem ? 'golem-death'    : 'boss-death';
+        const labelOffsetY = isGolem ? 10 : 22;
+
+        sp.sprite.setPosition(e.x, e.y);
+        sp.label?.setPosition(e.x, e.y - sp.sprite.displayHeight / 2 - labelOffsetY);
+
+        // ── Golem laser charge visual ──────────────────────────────────────────
+        if (isGolem) {
+          // Beam rotation angle — always computed from the server-locked direction vector.
+          // atan2(laserDirY, laserDirX) gives the exact angle the server aimed at charge start.
+          const beamAngle = Math.atan2(e.laserDirY, e.laserDirX);
+
+          if (e.chargePercent > 0) {
+            // Charging — show the growing orb sprite in front of the Golem.
+            // Origin (0, 0.5) puts the orb (left side of the frame) at the Golem's center;
+            // setRotation aims it toward the locked-in target direction.
+            if (!sp.chargeSprite) {
+              const cs = this.add.sprite(e.x, e.y, 'golem-laser', 0)
+                .setDepth(16)
+                .setOrigin(0, 0.5)
+                .setScale(1.0)
+                .setRotation(beamAngle);
+              cs.play('golem-laser-charge');
+              sp.chargeSprite = cs;
+            } else {
+              // Update position and aim each tick while charging (direction stays fixed).
+              sp.chargeSprite.setPosition(e.x, e.y).setRotation(beamAngle);
+            }
+            // Keep the Golem body in idle during charge (it's winding up, not running).
+            if (sp.animKey !== idleKey && sp.animKey !== hitKey && sp.animKey !== deathKey) {
+              sp.animKey = idleKey;
+              sp.sprite.play(idleKey);
+            }
+          } else if (sp.chargeSprite) {
+            // Charge ended (fired or cancelled) — remove the charge orb sprite.
+            sp.chargeSprite.destroy();
+            sp.chargeSprite = null;
+          }
+
+          // ── Laser beam fire visual ─────────────────────────────────────────────
+          // Detect the first tick where isLaserFiring flips from false → true.
+          // Spawn a beam sprite that plays golem-laser-fire, rotated to the aim direction.
+          if (e.isLaserFiring && !sp.wasFiring) {
+            const beam = this.add.sprite(e.x, e.y, 'golem-laser', 8)
+              .setDepth(17)
+              .setOrigin(0, 0.5)   // anchor at left edge — orb at Golem center, beam extends out
+              .setScale(1.5)       // 450 px long rendered beam
+              .setRotation(beamAngle);  // aim exactly where the server was pointing
+            beam.play('golem-laser-fire');
+            beam.once('animationcomplete', () => beam.destroy());
+            // Brief screen flash so players feel the laser impact.
+            this.cameras.main.flash(200, 0, 200, 255, false);
+          }
+          sp.wasFiring = e.isLaserFiring;
+        }
+
+        // Flip horizontally so the enemy always faces the direction it's moving.
+        const mdx = e.x - sp.prevX;
+        if (mdx < -1)     sp.sprite.setFlipX(true);
+        else if (mdx > 1) sp.sprite.setFlipX(false);
+
+        if (isGolem) {
+          const charging = e.chargePercent > 0;
+          const locked = sp.animKey === hitKey || sp.animKey === deathKey || sp.animKey === attackKey;
+          if (e.health < sp.prevHp && !locked && !charging) {
+            sp.animKey = hitKey;
+            sp.sprite.play(hitKey);
+            sp.sprite.once('animationcomplete', () => {
+              if (sp!.animKey === hitKey) {
+                const moving = Math.abs(e.x - sp!.prevX) > 1 || Math.abs(e.y - sp!.prevY) > 1;
+                sp!.animKey = moving ? runKey : idleKey;
+                sp!.sprite?.play(sp!.animKey);
+              }
+            });
+          } else if (!locked && !charging) {
+            const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
+            const want   = moving ? runKey : idleKey;
+            if (sp.animKey !== want) { sp.animKey = want; sp.sprite.play(want); }
+          }
+
+        } else if (e.name === 'Dark Mage') {
+          const locked = sp.animKey === 'boss-take-hit' || sp.animKey === 'boss-death' || sp.animKey === 'boss-attack';
+          if (e.health < sp.prevHp && !locked) {
+            sp.animKey = 'boss-take-hit';
+            sp.sprite.play('boss-take-hit');
+            sp.sprite.once('animationcomplete', () => {
+              if (sp!.animKey === 'boss-take-hit') {
+                const moving = Math.abs(e.x - sp!.prevX) > 1 || Math.abs(e.y - sp!.prevY) > 1;
+                sp!.animKey = moving ? 'boss-run' : 'boss-idle';
+                sp!.sprite?.play(sp!.animKey);
+              }
+            });
+          } else if (!locked) {
+            const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
+            const want   = moving ? 'boss-run' : 'boss-idle';
+            if (sp.animKey !== want) { sp.animKey = want; sp.sprite.play(want); }
+          }
+
+        } else if (e.name === 'Bat') {
+          const LOCKED_BAT = new Set(['bat-hurt', 'bat-attack', 'bat-fly-to-fall', 'bat-fall']);
+          if (e.health < sp.prevHp && !LOCKED_BAT.has(sp.animKey)) {
+            sp.animKey = 'bat-hurt';
+            sp.sprite.play('bat-hurt');
+            sp.sprite.once('animationcomplete', () => {
+              if (sp!.animKey === 'bat-hurt') { sp!.animKey = 'bat-fly'; sp!.sprite?.play('bat-fly'); }
+            });
+          }
+
+        } else if (e.name === 'Slime') {
+          const LOCKED_SLIME = new Set(['slime-attack', 'slime-hurt', 'slime-death']);
+          if (e.health < sp.prevHp && !LOCKED_SLIME.has(sp.animKey)) {
+            sp.animKey = 'slime-hurt';
+            sp.sprite.play('slime-hurt');
+            sp.sprite.once('animationcomplete', () => {
+              if (sp!.animKey === 'slime-hurt') {
+                const moving = Math.abs(e.x - sp!.prevX) > 1 || Math.abs(e.y - sp!.prevY) > 1;
+                sp!.animKey = moving ? 'slime-walk' : 'slime-idle';
+                sp!.sprite?.play(sp!.animKey);
+              }
+            });
+          } else if (!LOCKED_SLIME.has(sp.animKey)) {
+            const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
+            const want   = moving ? 'slime-walk' : 'slime-idle';
+            if (sp.animKey !== want) { sp.animKey = want; sp.sprite.play(want); }
+          }
+
+        } else if (e.name === 'Mimic') {
+          const REVEAL_LOCKED = new Set(['mimic-idle-closed', 'mimic-opening', 'mimic-idle-open', 'mimic-transform']);
+          const BATTLE_LOCKED = new Set(['mimic-attack-1', 'mimic-attack-2', 'mimic-hurt', 'mimic-death']);
+          if (e.health < sp.prevHp && !REVEAL_LOCKED.has(sp.animKey) && !BATTLE_LOCKED.has(sp.animKey)) {
+            sp.animKey = 'mimic-hurt';
+            sp.sprite.play('mimic-hurt');
+            sp.sprite.once('animationcomplete', () => {
+              if (sp!.animKey === 'mimic-hurt') {
+                sp!.animKey = 'mimic-idle-transformed';
+                sp!.sprite?.play('mimic-idle-transformed');
+              }
+            });
+          } else if (!REVEAL_LOCKED.has(sp.animKey) && !BATTLE_LOCKED.has(sp.animKey)) {
+            const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
+            const want   = moving ? 'mimic-walk' : 'mimic-idle-transformed';
+            if (sp.animKey !== want) { sp.animKey = want; sp.sprite.play(want); }
+          }
+
+        } else {
+          // Goblin / Skeleton / Mushroom: flash on damage (no hurt animation available)
+          if (e.health < sp.prevHp) {
+            this.tweens.add({
+              targets: sp.sprite, alpha: 0.25, duration: 80, yoyo: true, repeat: 1,
+              onComplete: () => sp!.sprite?.setAlpha(1),
+            });
+          }
+        }
+
+      } else {
+        // Fallback rectangle enemy
+        sp.body!.setPosition(e.x, e.y);
+        sp.label?.setPosition(e.x, e.y - (sp.body!.height / 2 + 6));
+        if (e.health < sp.prevHp) {
+          this.tweens.add({
+            targets: sp.body, alpha: 0.2, duration: 80, yoyo: true, repeat: 1,
+            onComplete: () => sp!.body?.setAlpha(1),
+          });
+        }
+      }
+    }
+
+    sp.prevX  = e.x;
+    sp.prevY  = e.y;
     sp.prevHp = e.health;
   }
 
-  // ── HP bar rendering (drawn every frame) ──────────────────────────────────
+  // ── HP bars ────────────────────────────────────────────────────────────────
 
-  // HP bars are drawn imperatively with a Graphics object rather than as
-  // individual sprites, because their size changes every frame and using
-  // separate objects for every bar would be more complex to manage.
   private drawHpBars() {
-    // clear() wipes everything drawn last frame — we redraw from scratch each tick.
     this.hpBars.clear();
     if (!this.state) return;
 
-    // Draw the local player's HP bar above their sprite.
     const me = this.state.players.find(p => p.userId === this.myUserId);
-    if (me) this.drawBar(this.localX, this.localY, me.currentHp, me.maxHp, 0x2ecc71);
+    if (me && this.myHeroClass) {
+      const top = this.localY - this.mySprite.displayHeight / 2;
+      this.drawBar(this.localX, top - 8, me.currentHp, me.maxHp, 0x2ecc71);
+    }
 
-    // Draw HP bars for every other player.
     for (const [id, sp] of this.others) {
       const p = this.state.players.find(pl => pl.userId === id);
-      if (p && p.isAlive) this.drawBar(sp.body.x, sp.body.y, p.currentHp, p.maxHp, 0x2ecc71);
-    }
-
-    // Draw HP bars above each enemy. Width matches the enemy rectangle width.
-    for (const [id, sp] of this.enemySprites) {
-      if (sp.dead) continue;
-      const e = this.state.currentRoom.enemies.find(en => en.id === id);
-      if (e && e.isAlive) this.drawBar(sp.body.x, sp.body.y - sp.body.height / 2 - 8, e.health, e.maxHealth, 0xe74c3c, sp.body.width);
-    }
-  }
-
-  // Draw one HP bar: dark background, then colored fill proportional to hp/max.
-  private drawBar(x: number, y: number, hp: number, max: number, color: number, width = 32) {
-    if (max <= 0) return;
-    const bx = x - width / 2, by = y - 20;
-    const pct = Math.max(0, hp / max);     // clamp so bar never overflows
-    this.hpBars.fillStyle(0x222222);
-    this.hpBars.fillRect(bx, by, width, 5);
-    this.hpBars.fillStyle(color);
-    this.hpBars.fillRect(bx, by, width * pct, 5);
-  }
-
-  // ── Room drawing ──────────────────────────────────────────────────────────
-
-  // Draws the static dungeon room background once during create().
-  // Uses a checkerboard pattern to give the floor visual texture without
-  // needing any image assets.
-  private drawRoom() {
-    const g = this.add.graphics().setDepth(0);
-
-    // Dark outer area (walls outside the playable room).
-    g.fillStyle(0x0d0b08);
-    g.fillRect(0, 0, 960, 640);
-
-    // Checkerboard floor tiles. Two slightly different dark shades alternate
-    // based on whether the column+row index sum is even or odd.
-    for (let tx = R.L; tx < R.R; tx += TILE) {
-      for (let ty = R.T; ty < R.B; ty += TILE) {
-        const w = Math.min(TILE, R.R - tx);
-        const h = Math.min(TILE, R.B - ty);
-        const even = (Math.floor((tx - R.L) / TILE) + Math.floor((ty - R.T) / TILE)) % 2 === 0;
-        g.fillStyle(even ? 0x2a1f14 : 0x231a10);
-        g.fillRect(tx, ty, w, h);
+      if (p && p.isAlive) {
+        const top = sp.sprite.y - sp.sprite.displayHeight / 2;
+        this.drawBar(sp.sprite.x, top - 8, p.currentHp, p.maxHp, 0x2ecc71);
       }
     }
 
-    // Gold border around the playable area — drawn at low opacity so it's
-    // visible but doesn't distract from the action.
-    g.lineStyle(2, 0xc9a84c, 0.3);
-    g.strokeRect(R.L, R.T, R.W, R.H);
-    g.lineStyle(1, 0xc9a84c, 0.1);
-    g.strokeRect(R.L + 4, R.T + 4, R.W - 8, R.H - 8);
+    for (const [id, sp] of this.enemySprites) {
+      if (sp.dead) continue;
+      const e = this.state.currentRoom.enemies.find(en => en.id === id);
+      if (!e || !e.isAlive) continue;
+      if (sp.sprite) {
+        const top = sp.sprite.y - sp.sprite.displayHeight / 2;
+        this.drawBar(sp.sprite.x, top - 8, e.health, e.maxHealth, 0x8e44ad, 60);
+
+        // ── Golem laser charge bar ────────────────────────────────────────────
+        // Drawn as a cyan bar directly below the HP bar, fills left→right as charge
+        // progresses from 0 % to 100 %. Label text shows the numeric percentage.
+        if (e.name === 'Golem') {
+          if (e.chargePercent > 0) {
+            // Cyan fill bar (charge progress) below the HP bar.
+            this.drawBar(sp.sprite.x, top - 1, e.chargePercent, 1, 0x00ccff, 60);
+            // Update label to show "⚡ XX%" so the player knows how close the laser is.
+            sp.label?.setText(`⚡ ${Math.round(e.chargePercent * 100)}%`);
+          } else {
+            // Restore the default "Golem" label when not charging.
+            if (sp.label?.text !== 'Golem') sp.label?.setText('Golem');
+          }
+        }
+      } else if (sp.body) {
+        const top = sp.body.y - sp.body.height / 2;
+        this.drawBar(sp.body.x, top - 8, e.health, e.maxHealth, 0xe74c3c, sp.body.width);
+      }
+    }
   }
 
-  // ── Visual effects ────────────────────────────────────────────────────────
+  private drawBar(x: number, y: number, hp: number, max: number, color: number, width = 32) {
+    if (max <= 0) return;
+    const bx  = x - width / 2;
+    const pct = Math.max(0, hp / max);
+    this.hpBars.fillStyle(0x222222);
+    this.hpBars.fillRect(bx, y, width, 5);
+    this.hpBars.fillStyle(color);
+    this.hpBars.fillRect(bx, y, width * pct, 5);
+  }
 
-  // Class-aware attack visual triggered immediately on SPACE press.
-  // nx/ny is the normalised aim direction; aimDist is how far the effect travels.
-  // This runs client-side for responsiveness — the server confirms actual hits.
+  // ── Room drawing ───────────────────────────────────────────────────────────
+
+  // Returns the Phaser texture key for the background that matches the given room.
+  // Room 0 is always the entrance; Boss and TreasureChest rooms have dedicated art;
+  // all other rooms cycle through the remaining themed environments in order.
+  private backgroundKeyForRoom(roomIndex: number, roomType: string): string {
+    if (roomIndex === 0) {
+      this.regularRoomCount = 0;
+      return 'bg-entrance-hall';
+    }
+    if (roomType === 'Boss')          return 'bg-boss-room';
+    if (roomType === 'TreasureChest') return 'bg-treasury';
+    const pool = [
+      'bg-green-garden', 'bg-water-canal', 'bg-lava-maze',
+      'bg-library', 'bg-crystal-cave', 'bg-armory',
+      'bg-throne-room', 'bg-demonic-summoning-room', 'bg-exit-hall',
+    ];
+    const key = pool[this.regularRoomCount % pool.length];
+    this.regularRoomCount++;
+    return key;
+  }
+
+  private renderBackground(bgKey: string) {
+    this.levelWidth  = REGION_W;
+    this.levelHeight = REGION_H;
+
+    // Place background at world origin at native resolution (no scaling).
+    const bg = this.add.image(0, 0, bgKey)
+      .setOrigin(0, 0)
+      .setDepth(0);
+    this.roomDecorations.push(bg);
+
+    for (const t of WORLD_TORCHES) this.placeTorch(t.x, t.y);
+
+    this.cameras.main.setBounds(0, 0, REGION_W, REGION_H);
+    this.currentHazards = [];
+  }
+
+  private placeTorch(x: number, y: number) {
+    const t = this.add.graphics().setDepth(2).setPosition(x, y);
+    t.fillStyle(0xffcc44, 0.18);  t.fillCircle(0, 0, 20);
+    t.fillStyle(0xff8800, 0.40);  t.fillCircle(0, 0, 11);
+    t.fillStyle(0xffcc44, 0.80);  t.fillCircle(0, 0,  5);
+    t.fillStyle(0xffffff, 0.85);  t.fillCircle(0, 0,  2);
+    this.roomDecorations.push(t);
+    const dur = 500 + Math.random() * 300;
+    this.tweens.add({
+      targets: t,
+      alpha:  { from: 0.60, to: 1.0 },
+      scaleX: { from: 0.85, to: 1.15 },
+      scaleY: { from: 0.85, to: 1.15 },
+      duration: dur, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+    });
+  }
+
+  private clearRoomVisuals() {
+    for (const d of this.roomDecorations) d.destroy();
+    this.roomDecorations = [];
+    this.currentHazards  = [];
+  }
+
+  private showRoomBanner(roomIndex: number, roomType?: string) {
+    const name = roomDisplayName(roomType, roomIndex);
+    const sub  = roomType === 'Boss'          ? '— Boss Encounter —'
+               : roomType === 'Elite'         ? '— Elite —'
+               : roomType === 'TreasureChest' ? '— Treasure —'
+               : `Room ${roomIndex + 1}`;
+
+    const panelW = 340, panelH = 72;
+    const panelX = (960 - panelW) / 2, panelY = 176;
+
+    const bg = this.add.graphics().setDepth(50).setAlpha(0).setScrollFactor(0);
+    bg.fillStyle(0x000000, 0.75);
+    bg.fillRect(panelX, panelY, panelW, panelH);
+    bg.lineStyle(1, 0xc9a84c, 0.8);
+    bg.strokeRect(panelX, panelY, panelW, panelH);
+
+    const titleObj = this.add.text(480, panelY + 18, name, {
+      fontFamily: 'Courier New', fontSize: '18px', color: '#c9a84c',
+    }).setOrigin(0.5, 0).setDepth(51).setAlpha(0).setScrollFactor(0);
+
+    const subObj = this.add.text(480, panelY + 44, sub, {
+      fontFamily: 'Courier New', fontSize: '11px', color: '#aaaaaa',
+    }).setOrigin(0.5, 0).setDepth(51).setAlpha(0).setScrollFactor(0);
+
+    const targets = [bg, titleObj, subObj];
+    this.tweens.add({
+      targets, alpha: 1, duration: 400,
+      onComplete: () => {
+        this.tweens.add({
+          targets, alpha: 0, duration: 600, delay: 2000,
+          onComplete: () => { bg.destroy(); titleObj.destroy(); subObj.destroy(); },
+        });
+      },
+    });
+  }
+
+  // ── Visual effects ─────────────────────────────────────────────────────────
+
   private flashAttack(nx: number, ny: number, aimDist: number) {
     const endX = this.localX + nx * aimDist;
     const endY = this.localY + ny * aimDist;
 
     if (this.myHeroClass === 'Warrior') {
-      // Expanding golden arc — communicates a melee swing without a projectile.
-      const ring = this.add.arc(this.localX, this.localY, ATTACK_RANGE * 0.6, 0, 360, false, 0xc9a84c, 0.4).setDepth(15);
-      this.tweens.add({
-        targets: ring, alpha: 0, scaleX: 1.5, scaleY: 1.5, duration: 250,
-        onComplete: () => ring.destroy(),
+      this.currentAnimKey = 'warrior-attack';
+      this.mySprite.play('warrior-attack');
+      this.mySprite.once('animationcomplete', () => {
+        if (this.currentAnimKey === 'warrior-attack') {
+          const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
+          this.playAnim(moving ? 'warrior-run' : 'warrior-idle');
+        }
       });
+      const atkAngle = Math.atan2(ny, nx);
+      const half     = Math.PI / 4;
+      const g = this.add.graphics().setDepth(15);
+      g.fillStyle(0xc9a84c, 0.45);
+      g.beginPath();
+      g.moveTo(this.localX, this.localY);
+      g.arc(this.localX, this.localY, ATTACK_RANGE, atkAngle - half, atkAngle + half, false);
+      g.closePath();
+      g.fillPath();
+      this.tweens.add({ targets: g, alpha: 0, duration: 250, onComplete: () => g.destroy() });
+
     } else if (this.myHeroClass === 'Archer') {
-      // Thin green rectangle that flies toward the cursor — arrow in flight.
+      this.currentAnimKey = 'archer-attack';
+      this.mySprite.play('archer-attack');
+      this.mySprite.once('animationcomplete', () => {
+        if (this.currentAnimKey === 'archer-attack') {
+          const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
+          this.playAnim(moving ? 'archer-run' : 'archer-idle');
+        }
+      });
       const arrow = this.add.rectangle(this.localX, this.localY, 16, 3, 0x27ae60).setDepth(15);
       arrow.rotation = Math.atan2(ny, nx);
-      this.tweens.add({
-        targets: arrow, x: endX, y: endY, duration: 220,
-        onComplete: () => arrow.destroy(),
-      });
+      this.tweens.add({ targets: arrow, x: endX, y: endY, duration: 220, onComplete: () => arrow.destroy() });
+
     } else if (this.myHeroClass === 'Wizard') {
-      // Purple orb that drifts toward the cursor — slower than an arrow.
+      this.currentAnimKey = 'wizard-attack1';
+      this.mySprite.play('wizard-attack1');
+      this.mySprite.once('animationcomplete', () => {
+        if (this.currentAnimKey === 'wizard-attack1') {
+          const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
+          this.playAnim(moving ? 'wizard-run' : 'wizard-idle');
+        }
+      });
       const orb = this.add.arc(this.localX, this.localY, 9, 0, 360, false, 0x8e44ad, 0.9).setDepth(15);
+      this.tweens.add({ targets: orb, x: endX, y: endY, duration: 420, alpha: 0.15, onComplete: () => orb.destroy() });
+    }
+  }
+
+  private findFireballImpact(nx: number, ny: number): { x: number; y: number } {
+    const range     = CLASS_RANGE['Wizard'];
+    const hitRadius = HIT_RADIUS['Wizard'] ?? 28;
+    let bestT = range;
+
+    if (this.state) {
+      for (const e of this.state.currentRoom.enemies) {
+        if (!e.isAlive) continue;
+        const ex = e.x - this.localX;
+        const ey = e.y - this.localY;
+        const t  = ex * nx + ey * ny;
+        if (t < 0 || t >= bestT) continue;
+        const cx   = this.localX + nx * t;
+        const cy   = this.localY + ny * t;
+        const perp = Math.sqrt((cx - e.x) ** 2 + (cy - e.y) ** 2);
+        if (perp <= hitRadius) bestT = t;
+      }
+    }
+    return { x: this.localX + nx * bestT, y: this.localY + ny * bestT };
+  }
+
+  private flashAbility(nx: number, ny: number) {
+    if (this.myHeroClass === 'Warrior') {
+      this.currentAnimKey = 'warrior-dash';
+      this.mySprite.play('warrior-dash');
+      this.mySprite.once('animationcomplete', () => {
+        if (this.currentAnimKey === 'warrior-dash') {
+          const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
+          this.playAnim(moving ? 'warrior-run' : 'warrior-idle');
+        }
+      });
+      const ring = this.add.arc(this.localX, this.localY, 22, 0, 360, false, 0xc9a84c, 0.75).setDepth(15);
+      this.tweens.add({ targets: ring, scaleX: 2.2, scaleY: 2.2, alpha: 0, duration: 420, onComplete: () => ring.destroy() });
+
+    } else if (this.myHeroClass === 'Archer') {
+      this.currentAnimKey = 'archer-attack';
+      this.mySprite.play('archer-attack');
+      this.mySprite.once('animationcomplete', () => {
+        if (this.currentAnimKey === 'archer-attack') {
+          const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
+          this.playAnim(moving ? 'archer-run' : 'archer-idle');
+        }
+      });
+      const centerAngle = Math.atan2(ny, nx);
+      const spread      = Math.PI / 12;
+      const range       = CLASS_RANGE['Archer'];
+      [-spread, 0, spread].forEach(offset => {
+        const angle = centerAngle + offset;
+        const arrow = this.add.rectangle(this.localX, this.localY, 18, 3, 0x27ae60).setDepth(15);
+        arrow.rotation = angle;
+        this.tweens.add({
+          targets: arrow,
+          x: this.localX + Math.cos(angle) * range,
+          y: this.localY + Math.sin(angle) * range,
+          duration: 210,
+          onComplete: () => arrow.destroy(),
+        });
+      });
+
+    } else if (this.myHeroClass === 'Wizard') {
+      this.currentAnimKey = 'wizard-attack2';
+      this.mySprite.play('wizard-attack2');
+      this.mySprite.once('animationcomplete', () => {
+        if (this.currentAnimKey === 'wizard-attack2') {
+          const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
+          this.playAnim(moving ? 'wizard-run' : 'wizard-idle');
+        }
+      });
+      const { x: impactX, y: impactY } = this.findFireballImpact(nx, ny);
+      const tdx      = impactX - this.localX;
+      const tdy      = impactY - this.localY;
+      const dist     = Math.sqrt(tdx * tdx + tdy * tdy);
+      const duration = Math.max(120, (dist / CLASS_RANGE['Wizard']) * 480);
+      const orb = this.add.arc(this.localX, this.localY, 11, 0, 360, false, 0xe67e22, 0.95).setDepth(15);
       this.tweens.add({
-        targets: orb, x: endX, y: endY, duration: 420, alpha: 0.15,
-        onComplete: () => orb.destroy(),
+        targets: orb, x: impactX, y: impactY, duration,
+        onComplete: () => {
+          orb.destroy();
+          const burst = this.add.arc(impactX, impactY, 12, 0, 360, false, 0xe67e22, 0.7).setDepth(15);
+          this.tweens.add({ targets: burst, scaleX: 7, scaleY: 7, alpha: 0, duration: 300, onComplete: () => burst.destroy() });
+        },
       });
     }
   }
 
-  // Redraws the directional aim indicator every frame based on current mouse position.
-  // Warrior: a 90° cone (two lines + arc) showing the melee swing sector.
-  // Archer/Wizard: a thin aim line toward the cursor with a hit-box circle at the tip.
+  // ── Aim indicator ──────────────────────────────────────────────────────────
+
   private drawAim() {
     this.aimGraphics.clear();
     if (!this.myHeroClass || !this.state) return;
@@ -460,9 +1333,9 @@ export class GameScene extends Phaser.Scene {
     const me = this.state.players.find(p => p.userId === this.myUserId);
     if (!me || !me.isAlive) return;
 
-    const ptr = this.input.activePointer;
-    const dx = ptr.worldX - this.localX;
-    const dy = ptr.worldY - this.localY;
+    const ptr  = this.input.activePointer;
+    const dx   = ptr.worldX - this.localX;
+    const dy   = ptr.worldY - this.localY;
     const dist = Math.sqrt(dx * dx + dy * dy);
     if (dist < 1) return;
 
@@ -470,35 +1343,23 @@ export class GameScene extends Phaser.Scene {
     const ny = dy / dist;
 
     if (this.myHeroClass === 'Warrior') {
-      const range = ATTACK_RANGE;
-      const half = Math.PI / 4;  // 45°
+      const half  = Math.PI / 4;
       const angle = Math.atan2(ny, nx);
-      const a1 = angle - half;
-      const a2 = angle + half;
-
+      const a1    = angle - half;
+      const a2    = angle + half;
       this.aimGraphics.lineStyle(1.5, 0xc9a84c, 0.55);
-      // Two lines from player forming the cone edges.
-      this.aimGraphics.lineBetween(
-        this.localX, this.localY,
-        this.localX + Math.cos(a1) * range, this.localY + Math.sin(a1) * range,
-      );
-      this.aimGraphics.lineBetween(
-        this.localX, this.localY,
-        this.localX + Math.cos(a2) * range, this.localY + Math.sin(a2) * range,
-      );
-      // Arc closing the cone tip.
+      this.aimGraphics.lineBetween(this.localX, this.localY, this.localX + Math.cos(a1) * ATTACK_RANGE, this.localY + Math.sin(a1) * ATTACK_RANGE);
+      this.aimGraphics.lineBetween(this.localX, this.localY, this.localX + Math.cos(a2) * ATTACK_RANGE, this.localY + Math.sin(a2) * ATTACK_RANGE);
       this.aimGraphics.beginPath();
-      this.aimGraphics.arc(this.localX, this.localY, range, a1, a2, false);
+      this.aimGraphics.arc(this.localX, this.localY, ATTACK_RANGE, a1, a2, false);
       this.aimGraphics.strokePath();
     } else {
       const range = CLASS_RANGE[this.myHeroClass] ?? 600;
       const hitR  = HIT_RADIUS[this.myHeroClass] ?? 16;
       const endX  = this.localX + nx * range;
       const endY  = this.localY + ny * range;
-
       this.aimGraphics.lineStyle(1, 0xc9a84c, 0.35);
       this.aimGraphics.lineBetween(this.localX, this.localY, endX, endY);
-      // Small circle at the tip representing the projectile hit-box size.
       this.aimGraphics.strokeCircle(endX, endY, hitR);
     }
   }
@@ -506,21 +1367,20 @@ export class GameScene extends Phaser.Scene {
   // ── Treasure chest ───────────────────────────────────────────────────────
 
   // Creates or updates the chest sprite for TreasureChest rooms.
-  // The chest sits at the top-centre of the room and changes appearance once
-  // the guardian dies — it turns gold and becomes clickable to open the loot window.
-  private syncChest(room: RoomState) {
+  // The chest sits at the top-centre of the room. Only one player can interact
+  // at a time — others see "IN USE" until the current player claims or closes.
+  private syncChest(room: RoomState, me: PlayerState | undefined) {
     if (room.type !== 'TreasureChest') {
       this.destroyChest();
       return;
     }
 
-    const cx = R.CX;
-    const cy = R.T + 45;
+    const cx = REGION_W / 2;
+    const cy = 80;
 
     if (!this.chestSprite) {
       const body = this.add.rectangle(cx, cy, 44, 32, 0x3d1f0a)
-        .setDepth(7)
-        .setStrokeStyle(1.5, 0x6b4420, 1);
+        .setDepth(7).setStrokeStyle(1.5, 0x6b4420, 1);
       const label = this.add.text(cx, cy - 26, 'CHEST', {
         fontFamily: 'Courier New', fontSize: '11px', color: '#c9a84c',
       }).setOrigin(0.5, 1).setDepth(8);
@@ -530,27 +1390,36 @@ export class GameScene extends Phaser.Scene {
       this.chestSprite = { body, label, hint };
     }
 
-    if (room.isCleared && !this.chestIsOpen) {
+    if (!room.isCleared) return;
+
+    const { body, hint } = this.chestSprite;
+
+    // One-time visual upgrade the first time the room is cleared.
+    if (!this.chestIsOpen) {
       this.chestIsOpen = true;
-      const { body, hint } = this.chestSprite;
-
       body.setFillStyle(0x7a5512).setStrokeStyle(2, 0xc9a84c, 1);
-      hint.setText('▶ CLICK TO OPEN').setStyle({ color: '#c9a84c' });
-
-      // Pop animation to draw attention when the chest unlocks.
-      this.tweens.add({
-        targets: body, scaleX: 1.25, scaleY: 1.25, duration: 160, yoyo: true,
-      });
-
-      // Slow gold pulse so the chest stands out while waiting to be opened.
-      this.tweens.add({
-        targets: body, alpha: 0.55, duration: 900, yoyo: true, repeat: -1,
-      });
-
-      body.setInteractive({ useHandCursor: true });
+      this.tweens.add({ targets: body, scaleX: 1.25, scaleY: 1.25, duration: 160, yoyo: true });
+      this.tweens.add({ targets: body, alpha: 0.55, duration: 900, yoyo: true, repeat: -1 });
       body.on('pointerover', () => body.setAlpha(1));
       body.on('pointerout',  () => { /* let the pulse tween control alpha */ });
-      body.on('pointerdown', () => this.game.events.emit('openChest'));
+    }
+
+    // Update hint text and click handler based on lock/claim state each tick.
+    const claimed = me?.chestClaimed ?? false;
+    const inUse   = !!room.chestOpenerId && room.chestOpenerId !== this.myUserId;
+
+    body.off('pointerdown');
+
+    if (claimed) {
+      hint.setText('CLAIMED').setStyle({ color: '#555555' });
+      body.disableInteractive();
+    } else if (inUse) {
+      hint.setText('IN USE').setStyle({ color: '#666666' });
+      body.disableInteractive();
+    } else {
+      hint.setText('▶ CLICK TO OPEN').setStyle({ color: '#c9a84c' });
+      body.setInteractive({ useHandCursor: true });
+      body.on('pointerdown', () => this.engine?.interactChest());
     }
   }
 
@@ -564,24 +1433,309 @@ export class GameScene extends Phaser.Scene {
     this.chestIsOpen = false;
   }
 
-  // ── Cleanup ───────────────────────────────────────────────────────────────
+  // ── Boss fireball rendering ────────────────────────────────────────────────
 
-  // Removes all enemy sprites from the scene (called on room transition).
+  // Keeps the projectileSprites map in sync with s.activeProjectiles each tick.
+  //
+  // How it works:
+  //   • New ID in state  → create a fireball sprite at the server position.
+  //   • Existing ID      → tween the sprite to the updated server position (100 ms = one tick).
+  //   • ID gone from state → fireball hit or expired; destroy sprite with an impact burst.
+  //
+  // Because the server only applies damage when the projectile physically reaches
+  // a player, moving out of its path after it is fired genuinely dodges the damage.
+  private syncProjectiles(s: GameState) {
+    const incoming = new Set((s.activeProjectiles ?? []).map(p => p.id));
+
+    // ── Destroy sprites for projectiles that no longer exist on the server ──
+    for (const [id, spr] of this.projectileSprites) {
+      if (incoming.has(id)) continue;
+
+      // The server removed this ID — the fireball either hit someone or ran out of range.
+      // Show a purple burst at the sprite's last known position as visual feedback.
+      const burst = this.add.arc(spr.x, spr.y, 10, 0, 360, false, 0x8b5cf6, 0.85).setDepth(15);
+      this.tweens.add({
+        targets: burst, scaleX: 5, scaleY: 5, alpha: 0, duration: 260,
+        onComplete: () => burst.destroy(),
+      });
+      spr.destroy();
+      this.projectileSprites.delete(id);
+    }
+
+    if (!incoming.size) return;
+
+    // Determine which type of attacker is alive in this room so we can use the
+    // correct projectile sprite and trigger the correct attack animation.
+    // Boss rooms have Dark Mage; Elite rooms have Golem — they never mix.
+    let attackerSp: EnemySprite | undefined;
+    let attackerName = '';
+    for (const [id, sp] of this.enemySprites) {
+      const enemy = s.currentRoom.enemies.find(e => e.id === id && e.isAlive);
+      if (sp.sprite && !sp.dead && enemy) {
+        attackerSp   = sp;
+        attackerName = enemy.name;   // 'Dark Mage' or 'Golem'
+        break;
+      }
+    }
+
+    // Pick the projectile sprite key and scale based on the attacker type.
+    // Dark Mage → purple fireball (boss-fireball, scale 2.5)
+    // Golem → glowing arm projectile (golem-projectile, scale 2.0 — 200×200 px, clearly visible)
+    const projKey   = attackerName === 'Golem' ? 'golem-projectile' : 'boss-fireball';
+    const projScale = attackerName === 'Golem' ? 2.0 : 2.5;
+
+    // ── Create or update a sprite for each active projectile ──
+    for (const p of s.activeProjectiles ?? []) {
+      const existing = this.projectileSprites.get(p.id);
+
+      if (!existing) {
+        // ── New projectile: create the sprite at the server's reported position ──
+        const spr = this.add.sprite(p.x, p.y, projKey).setDepth(15).setScale(projScale);
+
+        // Rotate the arm-projectile to face its actual travel direction.
+        // The sprite faces RIGHT by default; atan2 from the attacker to the projectile
+        // gives the correct angle for any direction the Golem threw it.
+        if (attackerName === 'Golem' && attackerSp?.sprite) {
+          const dx = p.x - attackerSp.sprite.x;
+          const dy = p.y - attackerSp.sprite.y;
+          if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+            spr.setRotation(Math.atan2(dy, dx));
+          }
+        }
+
+        spr.play(attackerName === 'Golem' ? 'golem-projectile' : 'boss-fireball');
+        this.projectileSprites.set(p.id, spr);
+
+        // Trigger the attacker's fire animation the moment it launches a projectile.
+        if (attackerSp?.sprite) {
+          const atkKey  = attackerName === 'Golem' ? 'golem-attack'  : 'boss-attack';
+          const idleKey = attackerName === 'Golem' ? 'golem-idle'    : 'boss-idle';
+          if (attackerSp.animKey !== atkKey && attackerSp.animKey !== (attackerName === 'Golem' ? 'golem-death' : 'boss-death')) {
+            attackerSp.animKey = atkKey;
+            attackerSp.sprite.play(atkKey);
+            attackerSp.sprite.once('animationcomplete', () => {
+              if (attackerSp!.animKey === atkKey) {
+                attackerSp!.animKey = idleKey;
+                attackerSp!.sprite?.play(idleKey);
+              }
+            });
+          }
+        }
+
+      } else {
+        // ── Existing projectile: smoothly move to the server's updated position ──
+        // The server moves the projectile ~26 px per 100 ms tick; tweening over
+        // exactly 100 ms with Linear easing reproduces that constant speed visually.
+        this.tweens.add({
+          targets: existing,
+          x: p.x, y: p.y,
+          duration: 100,  // one server tick — keeps sprite in lockstep with server
+          ease: 'Linear', // no acceleration — the projectile travels at constant speed
+        });
+      }
+    }
+  }
+
+  // Destroys all fireball sprites without impact bursts.
+  // Called on room transition so no stale fireballs linger in the new room.
+  private clearProjectiles() {
+    for (const spr of this.projectileSprites.values()) spr.destroy();
+    this.projectileSprites.clear();
+  }
+
+  // ── Enemy attack visuals ───────────────────────────────────────────────────
+  // Fired when a player's HP decreases: shows a per-enemy attack animation.
+  // Skeleton: animated sword sprite flies to the target.
+  // Goblin:   bomb animation plays at the goblin's position (melee burst).
+  // Bat:      triggers the bat's attack animation on its sprite.
+
+  private showEnemyAttacks(s: GameState) {
+    const skeletons = s.currentRoom.enemies.filter(e => e.name === 'Skeleton' && e.isAlive);
+    const goblins   = s.currentRoom.enemies.filter(e => e.name === 'Goblin'   && e.isAlive);
+    const bats      = s.currentRoom.enemies.filter(e => e.name === 'Bat'      && e.isAlive);
+    const slimes    = s.currentRoom.enemies.filter(e => e.name === 'Slime'    && e.isAlive);
+    const mushrooms = s.currentRoom.enemies.filter(e => e.name === 'Mushroom' && e.isAlive);
+    const mimics    = s.currentRoom.enemies.filter(e => e.name === 'Mimic'    && e.isAlive);
+
+    for (const player of s.players) {
+      const prevHp = this.prevPlayerHp.get(player.userId) ?? player.currentHp;
+      this.prevPlayerHp.set(player.userId, player.currentHp);
+      if (!player.isAlive || player.currentHp >= prevHp) continue;
+
+      const targetX = player.userId === this.myUserId
+        ? this.localX
+        : (this.others.get(player.userId)?.sprite.x ?? player.x);
+      const targetY = player.userId === this.myUserId
+        ? this.localY
+        : (this.others.get(player.userId)?.sprite.y ?? player.y);
+
+      // Skeleton: play attack anim on the skeleton's sprite, then launch a spinning sword projectile.
+      for (const sk of skeletons) {
+        const sdx = targetX - sk.x;
+        const sdy = targetY - sk.y;
+        if (sdx * sdx + sdy * sdy > 260 * 260) continue;
+        const skSp = this.enemySprites.get(sk.id);
+        if (skSp?.sprite && !skSp.dead && skSp.animKey !== 'skeleton-attack') {
+          skSp.animKey = 'skeleton-attack';
+          skSp.sprite.play('skeleton-attack');
+          skSp.sprite.once('animationcomplete', () => {
+            if (skSp.animKey === 'skeleton-attack') { skSp.animKey = ''; skSp.sprite?.setFrame(0); }
+          });
+        }
+        const sword = this.add.sprite(sk.x, sk.y, 'skeleton-sword', 0).setDepth(15).setScale(0.7);
+        sword.play('skeleton-sword');
+        this.tweens.add({ targets: sword, x: targetX, y: targetY, duration: 280, onComplete: () => sword.destroy() });
+      }
+
+      // Goblin: play attack anim on the goblin's sprite, then show a bomb burst at its position.
+      for (const gb of goblins) {
+        const gdx = targetX - gb.x;
+        const gdy = targetY - gb.y;
+        if (gdx * gdx + gdy * gdy > 130 * 130) continue;
+        const gbSp = this.enemySprites.get(gb.id);
+        if (gbSp?.sprite && !gbSp.dead && gbSp.animKey !== 'goblin-attack') {
+          gbSp.animKey = 'goblin-attack';
+          gbSp.sprite.play('goblin-attack');
+          gbSp.sprite.once('animationcomplete', () => {
+            if (gbSp.animKey === 'goblin-attack') { gbSp.animKey = ''; gbSp.sprite?.setFrame(0); }
+          });
+        }
+        const bomb = this.add.sprite(gb.x, gb.y, 'goblin-bomb', 0).setDepth(15).setScale(0.55);
+        bomb.play('goblin-bomb');
+        bomb.once('animationcomplete', () => bomb.destroy());
+      }
+
+      // Bat: trigger the bat-attack animation on the bat's own sprite.
+      for (const bt of bats) {
+        const bdx = targetX - bt.x;
+        const bdy = targetY - bt.y;
+        if (bdx * bdx + bdy * bdy > 130 * 130) continue;
+        const batSp = this.enemySprites.get(bt.id);
+        if (!batSp?.sprite || batSp.dead) continue;
+        const LOCKED_BAT = new Set(['bat-attack', 'bat-fly-to-fall', 'bat-fall']);
+        if (!LOCKED_BAT.has(batSp.animKey)) {
+          batSp.animKey = 'bat-attack';
+          batSp.sprite.play('bat-attack');
+          batSp.sprite.once('animationcomplete', () => {
+            if (batSp.animKey === 'bat-attack') { batSp.animKey = 'bat-fly'; batSp.sprite?.play('bat-fly'); }
+          });
+        }
+      }
+
+      // Slime: play slime-attack on the slime's sprite (melee).
+      for (const sl of slimes) {
+        const sdx = targetX - sl.x;
+        const sdy = targetY - sl.y;
+        if (sdx * sdx + sdy * sdy > 130 * 130) continue;
+        const slSp = this.enemySprites.get(sl.id);
+        if (!slSp?.sprite || slSp.dead) continue;
+        const LOCKED_SLIME = new Set(['slime-attack', 'slime-hurt', 'slime-death']);
+        if (!LOCKED_SLIME.has(slSp.animKey)) {
+          slSp.animKey = 'slime-attack';
+          slSp.sprite.play('slime-attack');
+          slSp.sprite.once('animationcomplete', () => {
+            if (slSp.animKey === 'slime-attack') {
+              const moving = Math.abs(sl.x - slSp.prevX) > 1 || Math.abs(sl.y - slSp.prevY) > 1;
+              slSp.animKey = moving ? 'slime-walk' : 'slime-idle';
+              slSp.sprite?.play(slSp.animKey);
+            }
+          });
+        }
+      }
+
+      // Mushroom: play mushroom-attack then launch a spinning projectile toward the player.
+      for (const mu of mushrooms) {
+        const mdx = targetX - mu.x;
+        const mdy = targetY - mu.y;
+        if (mdx * mdx + mdy * mdy > 220 * 220) continue;
+        const muSp = this.enemySprites.get(mu.id);
+        if (!muSp?.sprite || muSp.dead) continue;
+        if (muSp.animKey !== 'mushroom-attack') {
+          muSp.animKey = 'mushroom-attack';
+          muSp.sprite.play('mushroom-attack');
+          muSp.sprite.once('animationcomplete', () => {
+            if (muSp.animKey === 'mushroom-attack') { muSp.animKey = ''; muSp.sprite?.setFrame(0); }
+          });
+        }
+        const dist = Math.sqrt(mdx * mdx + mdy * mdy);
+        const proj = this.add.sprite(mu.x, mu.y, 'mushroom-projectile', 0).setDepth(15).setScale(1.0);
+        proj.play('mushroom-projectile');
+        this.tweens.add({
+          targets: proj, x: targetX, y: targetY,
+          duration: Math.max(150, (dist / 220) * 400),
+          onComplete: () => proj.destroy(),
+        });
+      }
+
+      // Mimic: randomly play mimic-attack-1 or -2 (only after reveal completes).
+      for (const mi of mimics) {
+        const midx = targetX - mi.x;
+        const midy = targetY - mi.y;
+        if (midx * midx + midy * midy > 130 * 130) continue;
+        const miSp = this.enemySprites.get(mi.id);
+        if (!miSp?.sprite || miSp.dead) continue;
+        const REVEAL_LOCKED = new Set(['mimic-idle-closed', 'mimic-opening', 'mimic-idle-open', 'mimic-transform']);
+        const BATTLE_LOCKED = new Set(['mimic-attack-1', 'mimic-attack-2', 'mimic-hurt']);
+        if (REVEAL_LOCKED.has(miSp.animKey) || BATTLE_LOCKED.has(miSp.animKey)) continue;
+        const atkKey = Math.random() < 0.5 ? 'mimic-attack-1' : 'mimic-attack-2';
+        miSp.animKey = atkKey;
+        miSp.sprite.play(atkKey);
+        miSp.sprite.once('animationcomplete', () => {
+          if (miSp.animKey === atkKey) {
+            miSp.animKey = 'mimic-idle-transformed';
+            miSp.sprite?.play('mimic-idle-transformed');
+          }
+        });
+      }
+    }
+  }
+
+  // ── Mimic reveal sequence ──────────────────────────────────────────────────
+
+  private startMimicReveal(sp: EnemySprite) {
+    this.time.delayedCall(1500, () => {
+      if (sp.dead || !sp.sprite) return;
+      sp.animKey = 'mimic-opening';
+      sp.sprite.play('mimic-opening');
+      sp.sprite.once('animationcomplete', () => {
+        if (sp.dead || !sp.sprite) return;
+        sp.animKey = 'mimic-idle-open';
+        sp.sprite.play('mimic-idle-open');
+        this.time.delayedCall(400, () => {
+          if (sp.dead || !sp.sprite) return;
+          sp.animKey = 'mimic-transform';
+          sp.sprite.play('mimic-transform');
+          sp.sprite.once('animationcomplete', () => {
+            if (sp.dead || !sp.sprite) return;
+            sp.animKey = 'mimic-idle-transformed';
+            sp.sprite.play('mimic-idle-transformed');
+            if (sp.label) sp.label.setText('Mimic');
+          });
+        });
+      });
+    });
+  }
+
+  // ── Cleanup ────────────────────────────────────────────────────────────────
+
   private clearEnemies() {
     for (const [id] of this.enemySprites) this.destroyEnemy(id);
   }
 
-  // Destroys a single enemy's Phaser game objects and removes them from the Map.
   private destroyEnemy(id: string) {
     const sp = this.enemySprites.get(id);
-    if (sp) { sp.body.destroy(); sp.label.destroy(); }
+    if (sp) {
+      sp.body?.destroy();
+      sp.sprite?.destroy();
+      sp.chargeSprite?.destroy();  // remove Golem charge orb if present
+      sp.label?.destroy();
+    }
     this.enemySprites.delete(id);
   }
 
-  // Destroys another player's sprites (called when they disconnect).
   private destroyOther(id: string) {
     const sp = this.others.get(id);
-    if (sp) { sp.body.destroy(); sp.label.destroy(); }
+    if (sp) { sp.sprite.destroy(); sp.label.destroy(); }
     this.others.delete(id);
   }
 }
