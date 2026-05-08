@@ -33,6 +33,8 @@ public class DungeonGenerator
 
         // The final room always has a single boss enemy.
         rooms.Add(MakeBossRoom(normalCount, floorNumber));
+        // After defeating the boss the party exits through the hall — victory is awarded on entry.
+        rooms.Add(MakeExitHallRoom(normalCount + 1));
         return rooms;
     }
 
@@ -75,6 +77,9 @@ public class DungeonGenerator
         return new RoomState(index, RoomType.Boss,
             [new EnemyInstance(new BossEnemy(floor), bx, by)]);
     }
+
+    private static RoomState MakeExitHallRoom(int index) =>
+        new RoomState(index, RoomType.ExitHall, []);
 
     // Creates one random enemy, applies floor scaling, and places it at a random position.
     private static EnemyInstance SpawnEnemy(int floor)

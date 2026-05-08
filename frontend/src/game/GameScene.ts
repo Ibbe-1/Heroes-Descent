@@ -1090,10 +1090,11 @@ export class GameScene extends Phaser.Scene {
     }
     if (roomType === 'Boss')          return 'bg-boss-room';
     if (roomType === 'TreasureChest') return 'bg-treasury';
+    if (roomType === 'ExitHall')      return 'bg-exit-hall';
     const pool = [
       'bg-green-garden', 'bg-water-canal', 'bg-lava-maze',
       'bg-library', 'bg-crystal-cave', 'bg-armory',
-      'bg-throne-room', 'bg-demonic-summoning-room', 'bg-exit-hall',
+      'bg-throne-room', 'bg-demonic-summoning-room',
     ];
     const key = pool[this.regularRoomCount % pool.length];
     this.regularRoomCount++;

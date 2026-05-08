@@ -60,6 +60,7 @@ function roomLabel(type: string) {
   if (type === 'Boss')          return '☠ BOSS';
   if (type === 'Elite')         return '★ ELITE';
   if (type === 'TreasureChest') return '✦ TREASURE';
+  if (type === 'ExitHall')      return '✦ EXIT HALL';
   return '○ NORMAL';
 }
 
@@ -67,6 +68,7 @@ function roomLabelColor(type: string) {
   if (type === 'Boss')          return '#e74c3c';
   if (type === 'Elite')         return '#f39c12';
   if (type === 'TreasureChest') return C.gold;
+  if (type === 'ExitHall')      return C.gold;
   return C.goldDim;
 }
 
@@ -218,7 +220,15 @@ export default function GameBoard({ state, userId, engine, sessionCode, onLeave 
       <div style={{ minHeight: '100vh', background: C.bg, color: C.gold, fontFamily: C.font, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1.5rem' }}>
         <div style={{ fontSize: '2rem', letterSpacing: '0.15em' }}>★ VICTORY ★</div>
         <p style={{ color: C.white, letterSpacing: '0.08em' }}>The dungeon has been conquered!</p>
-        <button onClick={onLeave} style={btnStyle(C.gold)}>← Return Home</button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', minWidth: 240 }}>
+          {state.players.map(p => (
+            <div key={p.userId} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 14px', border: `1px solid ${C.goldDim}` }}>
+              <span style={{ color: C.white, fontSize: '0.8rem' }}>{p.username}</span>
+              <span style={{ color: C.gold, fontSize: '0.8rem' }}>✦ {p.gold} gold</span>
+            </div>
+          ))}
+        </div>
+        <button onClick={onLeave} style={btnStyle(C.gold)}>Claim Rewards &amp; Return Home</button>
       </div>
     );
   }
