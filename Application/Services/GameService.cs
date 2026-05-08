@@ -641,6 +641,171 @@ public class GameService
         return log;
     }
 
+    // ── Dark Mage boss abilities ──────────────────────────────────────────────
+
+    // Called every 100 ms tick while the boss is alive.
+    // Handles two boss-specific mechanics:
+    //   1. Flame wave volleys — three parallel walls of fire sweep across the room
+    //      every BossFlameWaveCooldownMs milliseconds, alternating direction each time.
+    //   2. Skeleton reinforcements — four skeletons are summoned when the boss drops
+    //      below 50 % HP, and again at 20 % HP (each threshold fires at most once).
+    public List<string> TickBossAbilities(GameSession session)
+    {
+        var log = new List<string>();
+        var now = DateTime.UtcNow;
+
+        var alivePlayers = session.Players.Where(p => p.Hero.IsAlive).ToList();
+        if (!alivePlayers.Any()) return log;
+
+        // .ToList() so adding skeletons to Enemies mid-loop doesn't invalidate the iterator.
+        foreach (var inst in session.CurrentRoom.Enemies
+            .Where(e => e.Enemy is BossEnemy && e.Enemy.IsAlive)
+            .ToList())
+        {
+            float hpPct = (float)inst.Enemy.Health / inst.Enemy.MaxHealth * 100f;
+
+            // ── Skeleton reinforcements ────────────────────────────────────────────
+            foreach (int threshold in new[] { 50, 20 })
+            {
+                if (hpPct > threshold || inst.BossSkeletonThresholdsUsed.Contains(threshold))
+                    continue;
+
+                inst.BossSkeletonThresholdsUsed.Add(threshold);
+                log.Add($"Dark Mage shouts a dark incantation — skeletons rise!");
+
+                // Spawn four skeletons in a square pattern around the boss.
+                (float ox, float oy)[] offsets = [(-160f, -160f), (160f, -160f), (-160f, 160f), (160f, 160f)];
+                foreach (var (ox, oy) in offsets)
+                {
+                    float sx = Math.Clamp(inst.X + ox, RoomBounds.Left + 40, RoomBounds.Right  - 40);
+                    float sy = Math.Clamp(inst.Y + oy, RoomBounds.Top  + 40, RoomBounds.Bottom - 40);
+                    session.CurrentRoom.Enemies.Add(new EnemyInstance(new Skeleton(), sx, sy));
+                }
+            }
+
+            // ── Flame wave volley ──────────────────────────────────────────────────
+            // On first encounter initialise the clock (no waves yet) — gives players
+            // a full cooldown window before the first volley.
+            if (inst.LastFlameWaveTime == DateTime.MinValue)
+            {
+                inst.LastFlameWaveTime = now;
+                continue;
+            }
+
+            if ((now - inst.LastFlameWaveTime).TotalMilliseconds < RoomBounds.BossFlameWaveCooldownMs)
+                continue;
+
+            inst.LastFlameWaveTime = now;
+
+            int waveDmg = Math.Max(8, inst.Enemy.Attack / 3);
+            int pattern = inst.BossVolleyCount % 3;
+            inst.BossVolleyCount++;
+
+            switch (pattern)
+            {
+                case 0:
+                {
+                    // Horizontal sweep — 3 parallel vertical bands crossing left or right.
+                    bool  goRight = Random.Shared.Next(2) == 0;
+                    float startX  = goRight ? RoomBounds.Left : RoomBounds.Right;
+                    float dirX    = goRight ? 1f : -1f;
+                    foreach (float y in RoomBounds.FlameWaveYPositions)
+                        session.ActiveFlameWaves.Add(new FlameWave(startX, y, dirX, 0f, RoomBounds.FlameWaveHalfHeight, waveDmg));
+                    log.Add("Dark Mage conjures a wall of flame — move to the gaps!");
+                    break;
+                }
+                case 1:
+                {
+                    // Vertical rain — 3 parallel horizontal bands dropping or rising.
+                    bool  goDown = Random.Shared.Next(2) == 0;
+                    float startY = goDown ? RoomBounds.Top : RoomBounds.Bottom;
+                    float dirY   = goDown ? 1f : -1f;
+                    foreach (float x in RoomBounds.FlameWaveXPositions)
+                        session.ActiveFlameWaves.Add(new FlameWave(x, startY, 0f, dirY, RoomBounds.FlameWaveHalfHeight, waveDmg));
+                    log.Add("Dark Mage sends flames raining down — dodge sideways!");
+                    break;
+                }
+                default:
+                {
+                    // Cross-fire — 2 horizontal + 2 vertical simultaneously; safe corners only.
+                    bool  hGoRight = Random.Shared.Next(2) == 0;
+                    float hStartX  = hGoRight ? RoomBounds.Left : RoomBounds.Right;
+                    float hDirX    = hGoRight ? 1f : -1f;
+                    bool  vGoDown  = Random.Shared.Next(2) == 0;
+                    float vStartY  = vGoDown ? RoomBounds.Top : RoomBounds.Bottom;
+                    float vDirY    = vGoDown ? 1f : -1f;
+                    foreach (float y in RoomBounds.FlameWaveCrossYPositions)
+                        session.ActiveFlameWaves.Add(new FlameWave(hStartX, y, hDirX, 0f, RoomBounds.FlameWaveHalfHeight, waveDmg));
+                    foreach (float x in RoomBounds.FlameWaveCrossXPositions)
+                        session.ActiveFlameWaves.Add(new FlameWave(x, vStartY, 0f, vDirY, RoomBounds.FlameWaveHalfHeight, waveDmg));
+                    log.Add("Dark Mage unleashes a flame cross — find the safe corners!");
+                    break;
+                }
+            }
+        }
+
+        return log;
+    }
+
+    // Advances every active flame wave one step and checks for player collisions.
+    // Waves are removed once they exit the room; once a wave exits or all enemies
+    // are dead the list empties naturally so this method is cheap to call each tick.
+    public List<string> MoveFlameWaves(GameSession session, float deltaMs)
+    {
+        if (session.ActiveFlameWaves.Count == 0) return [];
+
+        // Waves vanish instantly when the room is cleared so players aren't penalised
+        // after the last skeleton falls.
+        if (session.CurrentRoom.IsCleared)
+        {
+            session.ActiveFlameWaves.Clear();
+            return [];
+        }
+
+        var log          = new List<string>();
+        float dt         = deltaMs / 1000f;
+        var alivePlayers = session.Players.Where(p => p.Hero.IsAlive).ToList();
+
+        foreach (var wave in session.ActiveFlameWaves.ToList())
+        {
+            wave.X += wave.DirX * FlameWave.Speed * dt;
+            wave.Y += wave.DirY * FlameWave.Speed * dt;
+
+            // Remove the wave once it has fully crossed the room (check both axes).
+            bool exited = (wave.DirX > 0 && wave.X > RoomBounds.Right  + 60f)
+                       || (wave.DirX < 0 && wave.X < RoomBounds.Left   - 60f)
+                       || (wave.DirY > 0 && wave.Y > RoomBounds.Bottom + 60f)
+                       || (wave.DirY < 0 && wave.Y < RoomBounds.Top    - 60f);
+            if (exited)
+            {
+                session.ActiveFlameWaves.Remove(wave);
+                continue;
+            }
+
+            // Hit any player whose centre falls inside the wave's damage band.
+            // The wave only damages each player once even over multiple ticks.
+            // Catch window (±30 px) is in the direction of travel; HalfHeight is perpendicular.
+            foreach (var player in alivePlayers)
+            {
+                if (wave.HitPlayerIds.Contains(player.UserId)) continue;
+
+                bool hit = wave.DirX != 0
+                    ? MathF.Abs(player.X - wave.X) <= 30f && MathF.Abs(player.Y - wave.Y) <= wave.HalfHeight
+                    : MathF.Abs(player.Y - wave.Y) <= 30f && MathF.Abs(player.X - wave.X) <= wave.HalfHeight;
+
+                if (!hit) continue;
+
+                wave.HitPlayerIds.Add(player.UserId);
+                log.AddRange(ApplyHit(wave.Damage, "Flame wave", player, session, alivePlayers));
+                if (session.IsGameOver) break;
+            }
+
+            if (session.IsGameOver) break;
+        }
+
+        return log;
+    }
+
     // ── DTO builder ───────────────────────────────────────────────────────────
 
     // Converts the live session state into a serialisation-friendly DTO.
@@ -704,6 +869,10 @@ public class GameService
             .Select(p => new ActiveProjectileDto(p.Id.ToString(), p.X, p.Y))
             .ToList();
 
+        var activeFlameWaves = session.ActiveFlameWaves
+            .Select(w => new FlameWaveDto(w.Id.ToString(), w.X, w.Y, w.DirX, w.DirY, w.HalfHeight))
+            .ToList();
+
         return new GameStateDto(
             session.SessionId,
             session.CurrentRoomIndex,
@@ -712,7 +881,8 @@ public class GameService
             session.RecentLog.TakeLast(15).ToList(),
             session.IsGameOver,
             session.IsVictory,
-            activeProjectiles
+            activeProjectiles,
+            activeFlameWaves
         );
     }
 

@@ -81,16 +81,26 @@ public class EnemyAiService : BackgroundService
                         // The Golem skips normal attacks while it is charging (handled inside).
                         var attackLog = _game.TickEnemyAttacks(session);
                         session.AddLogRange(attackLog);
+
+                        // Step 4: Dark Mage boss abilities — flame wave volleys and skeleton summons.
+                        var bossLog = _game.TickBossAbilities(session);
+                        session.AddLogRange(bossLog);
                     }
 
-                    // Step 3: advance every fireball that is currently in flight.
+                    // Advance every fireball that is currently in flight.
                     // Runs even if all enemies are dead — a fireball fired in the boss's
                     // last moment should still be able to hit a player.
-                    // MoveProjectiles returns a log entry if a player is hit.
                     if (session.ActiveProjectiles.Count > 0)
                     {
                         var projLog = _game.MoveProjectiles(session, deltaMs);
                         session.AddLogRange(projLog);
+                    }
+
+                    // Advance flame waves — also clears them if the room is already cleared.
+                    if (session.ActiveFlameWaves.Count > 0)
+                    {
+                        var waveLog = _game.MoveFlameWaves(session, deltaMs);
+                        session.AddLogRange(waveLog);
                     }
 
                     // Build the DTO inside the lock so it captures a consistent snapshot.

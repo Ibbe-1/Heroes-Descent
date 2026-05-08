@@ -10,6 +10,19 @@
 
 export type HeroClass = 'Warrior' | 'Wizard' | 'Archer';
 
+// One flame wave from a Dark Mage volley.
+// x/y are the current leading-edge position.
+// dirX is +1/-1 for horizontal waves; dirY is +1/-1 for vertical waves (only one is non-zero).
+// halfHeight is the half-extent of the damage band perpendicular to the direction of travel.
+export interface FlameWave {
+  id: string;
+  x: number;
+  y: number;
+  dirX: number;
+  dirY: number;
+  halfHeight: number;
+}
+
 // A fireball currently flying through the room.
 // The server updates its position every 100 ms tick; when it disappears from the
 // list it either hit a player or ran out of range — show an impact burst either way.
@@ -89,4 +102,5 @@ export interface GameState {
   isGameOver: boolean;
   isVictory: boolean;
   activeProjectiles: ActiveProjectile[];  // fireballs currently in flight (empty most ticks)
+  activeFlameWaves:  FlameWave[];         // Dark Mage flame wave volleys (empty most ticks)
 }

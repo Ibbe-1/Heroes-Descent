@@ -16,6 +16,12 @@ namespace Heroes_Descent.Application.Dtos;
 // expired (MaxRange reached) — the frontend shows a small impact burst either way.
 public record ActiveProjectileDto(string Id, float X, float Y);
 
+// One flame wave from a Dark Mage volley.
+// X/Y are the current leading-edge position. DirX/DirY tell the frontend which way it moves
+// (only one is non-zero: DirX for horizontal, DirY for vertical waves).
+// HalfHeight is the half-extent of the damage band perpendicular to travel.
+public record FlameWaveDto(string Id, float X, float Y, float DirX, float DirY, float HalfHeight);
+
 // The root object broadcast to all clients after any game event.
 // Contains everything the frontend needs to render one frame of the game.
 public record GameStateDto(
@@ -27,7 +33,8 @@ public record GameStateDto(
     List<string> Log,          // last 15 combat log lines
     bool IsGameOver,
     bool IsVictory,
-    List<ActiveProjectileDto> ActiveProjectiles  // fireballs currently in flight (empty most ticks)
+    List<ActiveProjectileDto> ActiveProjectiles,  // fireballs currently in flight (empty most ticks)
+    List<FlameWaveDto>        ActiveFlameWaves    // Dark Mage flame wave volleys (empty most ticks)
 );
 
 // Describes the room the party is currently in.
