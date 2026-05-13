@@ -56,9 +56,9 @@ public static class RoomBounds
 
     // Golem laser charge thresholds and timing
     // The Golem charges its laser once each time HP crosses 75 %, 50 %, and 25 %.
-    // During the 2 s wind-up it freezes in place and gains bonus defence;
+    // During the 1 s wind-up it freezes in place and gains bonus defence;
     // when it fires the laser it damages ALL alive players and defence resets.
-    public const float GolemChargeDurationMs    = 2000f; // 2 s charge before the laser fires
+    public const float GolemChargeDurationMs    = 1000f; // 1 s charge before the laser fires
     public const int   GolemLaserDefenseBonus   = 15;    // extra defence during wind-up
     public const float GolemLaserFiringVisualMs = 700f;  // how long isLaserFiring stays true after the shot
     public const float GolemLaserDamageMultiplier = 2.5f; // laser hits harder than a normal attack
@@ -71,6 +71,21 @@ public static class RoomBounds
 
     // Mad King (ChestGuardian) — how long isAttacking stays true after a melee hit
     public const float MadKingAttackVisualMs = 400f;
+
+    // Dark Mage flame wave constants
+    // Volleys rotate through three patterns every BossFlameWaveCooldownMs milliseconds:
+    //   Pattern 0 — horizontal sweep : 3 vertical bands at FlameWaveYPositions, sweep L/R
+    //   Pattern 1 — vertical rain    : 3 horizontal bands at FlameWaveXPositions, sweep U/D
+    //   Pattern 2 — cross-fire       : 2 horizontal + 2 vertical at once, safe corners only
+    public const float BossFlameWaveCooldownMs = 7000f;
+    public const float FlameWaveHalfHeight     = 38f;
+    // Y centres for the three horizontal-sweep bands (pattern 0).
+    public static readonly float[] FlameWaveYPositions = { 240f, 450f, 660f };
+    // X centres for the three vertical-rain columns (pattern 1).
+    public static readonly float[] FlameWaveXPositions = { 300f, 640f, 980f };
+    // Reduced set for cross-fire (pattern 2) — 2 of each leaves safe corners.
+    public static readonly float[] FlameWaveCrossYPositions = { 280f, 620f };
+    public static readonly float[] FlameWaveCrossXPositions = { 380f, 900f };
 
     // Enemies won't spawn within this radius of the room centre,
     // giving the party a safe landing zone at the start of each room

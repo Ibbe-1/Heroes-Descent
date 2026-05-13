@@ -15,7 +15,8 @@
       "Bash(Select-Object -Property FullName)",
       "Bash(python3 *)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Gragas\\\\source\\\\repos\\\\Grupparbete\\\\Heroes Descent\" -Recurse -Filter \"*.cs\")",
-      "Bash(Select-Object -First 50)"
+      "Bash(Select-Object -First 50)",
+      "WebFetch(domain:media.discordapp.net)"
     ]
   }
 }

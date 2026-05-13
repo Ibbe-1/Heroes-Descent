@@ -42,6 +42,10 @@ public class GameSession
     // The AI service checks this and only fires enemy attacks every ~800 ms.
     public DateTime LastEnemyTick { get; set; } = DateTime.UtcNow;
 
+    // Flame waves currently sweeping across the room — fired by the Dark Mage boss.
+    // Three are active at once during a volley; each is removed when it exits the room.
+    public List<FlameWave> ActiveFlameWaves { get; } = [];
+
     // Fireballs currently in flight across the room.
     // Each entry is created when the boss fires and removed when the fireball
     // either hits a player or travels beyond MaxRange.

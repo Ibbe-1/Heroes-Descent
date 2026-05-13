@@ -58,7 +58,7 @@ public abstract class Hero
 
     // Executes the hero's special ability.
     // Returns a numeric value whose meaning depends on the hero:
-    //   Warrior  → 0 (sets IsBlocking flag, game engine halves next incoming hit)
+    //   Warrior  → 0 (sets IsUntargetable, game engine skips all incoming hits for 5 s)
     //   Wizard   → magic damage dealt to all enemies
     //   Archer   → number of targets hit (game engine applies BasicAttack to each)
     public abstract int UseAbility();

@@ -106,6 +106,10 @@ export class GameScene extends Phaser.Scene {
   } | null = null;
   private chestIsOpen = false;
 
+  // One Graphics object per active flame wave from the Dark Mage boss.
+  // Drawn as a glowing vertical fire band; updated each server tick.
+  private flameWaveGraphics: Map<string, Phaser.GameObjects.Graphics> = new Map();
+
   private myHeroClass    = '';
   private prevPlayerHp:  Map<string, number> = new Map();
   private prevMyHp       = -1;
@@ -288,7 +292,7 @@ export class GameScene extends Phaser.Scene {
     this.kS     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);  // move down
     this.kD     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.D);  // move right
     this.kSpace = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE); // basic attack toward mouse cursor
-    this.kQ     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q);    // class ability (Warrior: Shield Block, Wizard: Fireball, Archer: Multi-Shot)
+    this.kQ     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q);    // class ability (Warrior: Undying Rage, Wizard: Fireball, Archer: Multi-Shot)
 
     // Stop the browser from intercepting these keys.
     // Without this, pressing W/S would scroll the page and Space would jump to the bottom.
@@ -604,6 +608,7 @@ export class GameScene extends Phaser.Scene {
       this.clearEnemies();
       this.destroyChest();
       this.clearProjectiles();  // discard any fireballs still in flight from the previous room
+      this.clearFlameWaves();   // discard any flame waves from the previous room
       this.clearRoomVisuals();
       this.renderBackground(this.backgroundKeyForRoom(s.currentRoomIndex, s.currentRoom.type));
       this.showRoomBanner(s.currentRoomIndex, s.currentRoom.type);
@@ -613,6 +618,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.showEnemyAttacks(s);
+    this.showFlameWaves(s);
     this.state = s;
 
     if (this.myUserId) this.destroyOther(this.myUserId);
@@ -1103,6 +1109,15 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    // Floating damage number — shown whenever the enemy takes a hit this tick.
+    if (e.health < sp.prevHp) {
+      const dmg = sp.prevHp - e.health;
+      const nx = sp.sprite?.x ?? sp.body?.x ?? e.x;
+      const ny = sp.sprite?.y ?? sp.body?.y ?? e.y;
+      const big = dmg >= 20;
+      this.spawnFloatingNumber(nx, ny, `${dmg}`, '#ffee44', big ? 18 : 14);
+    }
+
     sp.prevX  = e.x;
     sp.prevY  = e.y;
     sp.prevHp = e.health;
@@ -1179,10 +1194,11 @@ export class GameScene extends Phaser.Scene {
     }
     if (roomType === 'Boss')          return 'bg-boss-room';
     if (roomType === 'TreasureChest') return 'bg-treasury';
+    if (roomType === 'ExitHall')      return 'bg-exit-hall';
     const pool = [
       'bg-green-garden', 'bg-water-canal', 'bg-lava-maze',
       'bg-library', 'bg-crystal-cave', 'bg-armory',
-      'bg-throne-room', 'bg-demonic-summoning-room', 'bg-exit-hall',
+      'bg-throne-room', 'bg-demonic-summoning-room',
     ];
     const key = pool[this.regularRoomCount % pool.length];
     this.regularRoomCount++;
@@ -1623,6 +1639,93 @@ export class GameScene extends Phaser.Scene {
     this.projectileSprites.clear();
   }
 
+  // ── Floating combat numbers ────────────────────────────────────────────────
+
+  // Spawns a number that floats upward and fades out over ~1 second.
+  // color '#ffee44' for damage dealt to enemies, '#ff4444' for damage taken by players.
+  private spawnFloatingNumber(x: number, y: number, label: string, color: string, fontSize = 15) {
+    const jitter = Phaser.Math.Between(-10, 10);
+    const t = this.add.text(x + jitter, y - 20, label, {
+      fontFamily: 'Courier New, monospace',
+      fontSize: `${fontSize}px`,
+      color,
+      stroke: '#000000',
+      strokeThickness: 3,
+    }).setOrigin(0.5, 1).setDepth(20);
+
+    this.tweens.add({
+      targets: t,
+      y: y - 80,
+      alpha: 0,
+      duration: 950,
+      ease: 'Cubic.Out',
+      onComplete: () => t.destroy(),
+    });
+  }
+
+  // ── Flame wave rendering ───────────────────────────────────────────────────
+
+  private showFlameWaves(s: GameState) {
+    const incoming = new Set((s.activeFlameWaves ?? []).map(w => w.id));
+
+    // Remove Graphics objects for waves that have left the room or been cleared.
+    for (const [id, g] of this.flameWaveGraphics) {
+      if (!incoming.has(id)) {
+        g.destroy();
+        this.flameWaveGraphics.delete(id);
+      }
+    }
+
+    for (const w of s.activeFlameWaves ?? []) {
+      const hh = w.halfHeight;
+      const existing = this.flameWaveGraphics.get(w.id);
+
+      if (!existing) {
+        const g = this.add.graphics().setDepth(13);
+        const isVertical = Math.abs(w.dirY ?? 0) > 0.5;
+
+        if (isVertical) {
+          // Horizontal band for a vertically-travelling wave.
+          // Outer glow — wide, translucent deep purple.
+          g.fillStyle(0x7d3c98, 0.22);
+          g.fillRect(-(hh + 14), -24, (hh + 14) * 2, 48);
+          // Main flame band — vivid purple.
+          g.fillStyle(0x8e44ad, 0.82);
+          g.fillRect(-hh, -10, hh * 2, 20);
+          // Bright inner core — pale lavender.
+          g.fillStyle(0xd7bde2, 0.95);
+          g.fillRect(-(hh - 10), -4, (hh - 10) * 2, 8);
+        } else {
+          // Vertical band for a horizontally-travelling wave.
+          // Outer glow — tall, translucent deep purple.
+          g.fillStyle(0x7d3c98, 0.22);
+          g.fillRect(-24, -(hh + 14), 48, (hh + 14) * 2);
+          // Main flame band — vivid purple.
+          g.fillStyle(0x8e44ad, 0.82);
+          g.fillRect(-10, -hh, 20, hh * 2);
+          // Bright inner core — pale lavender.
+          g.fillStyle(0xd7bde2, 0.95);
+          g.fillRect(-4, -(hh - 10), 8, (hh - 10) * 2);
+        }
+
+        g.setPosition(w.x, w.y);
+        this.flameWaveGraphics.set(w.id, g);
+      } else {
+        // Server moves waves ~20 px per 100 ms tick — tween for smooth motion.
+        if (Math.abs(w.dirY ?? 0) > 0.5) {
+          this.tweens.add({ targets: existing, y: w.y, duration: 100, ease: 'Linear' });
+        } else {
+          this.tweens.add({ targets: existing, x: w.x, duration: 100, ease: 'Linear' });
+        }
+      }
+    }
+  }
+
+  private clearFlameWaves() {
+    for (const g of this.flameWaveGraphics.values()) g.destroy();
+    this.flameWaveGraphics.clear();
+  }
+
   // ── Enemy attack visuals ───────────────────────────────────────────────────
   // Fired when a player's HP decreases: shows a per-enemy attack animation.
   // Skeleton: animated sword sprite flies to the target.
@@ -1648,6 +1751,9 @@ export class GameScene extends Phaser.Scene {
       const targetY = player.userId === this.myUserId
         ? this.localY
         : (this.others.get(player.userId)?.sprite.y ?? player.y);
+
+      // Floating red damage number above the player who was hit.
+      this.spawnFloatingNumber(targetX, targetY, `-${prevHp - player.currentHp}`, '#ff4444', 14);
 
       // Skeleton: play attack anim on the skeleton's sprite, then launch a spinning sword projectile.
       for (const sk of skeletons) {

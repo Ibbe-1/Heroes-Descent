@@ -26,6 +26,22 @@ public class EnemyInstance
     // LastEnemyTick so melee and ranged attacks run on independent cooldowns.
     public DateTime LastRangedAttackTime { get; set; } = DateTime.MinValue;
 
+    // ── Dark Mage boss ability state ──────────────────────────────────────────
+    // Only meaningful when Enemy is BossEnemy; ignored for all other types.
+
+    // HP thresholds (50, 20) at which the boss has already summoned skeleton reinforcements.
+    public HashSet<int> BossSkeletonThresholdsUsed { get; } = [];
+
+    // How many flame wave volleys the boss has fired so far.
+    // Used to cycle through attack patterns: horizontal sweep → vertical rain → cross-fire.
+    public int BossVolleyCount { get; set; } = 0;
+
+    // Cooldown tracker for the flame wave volley.
+    // DateTime.MinValue on first encounter — TickBossAbilities converts this to
+    // UtcNow on the first tick, giving players a full cooldown grace period before
+    // the first waves fire.
+    public DateTime LastFlameWaveTime { get; set; } = DateTime.MinValue;
+
     // ── Golem laser charge state ──────────────────────────────────────────────
     // Only meaningful when Enemy is GolemEnemy; ignored for all other types.
 
