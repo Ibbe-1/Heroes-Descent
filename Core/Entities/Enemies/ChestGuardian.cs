@@ -9,7 +9,7 @@ public class ChestGuardian : Enemy
     public ChestGuardian()
     {
         Name = "Mad King";
-        MovementSpeed = 55f;
+        MovementSpeed = 120f;
         MaxHealth = 200;
         Health = MaxHealth;
         Attack = 15;

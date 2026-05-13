@@ -458,6 +458,13 @@ public class GameService
                 }
                 // else: player is beyond GolemRangedMax — Golem chases, no attack.
             }
+            else if (inst.Enemy is ChestGuardian && globalReady)
+            {
+                if (dist > RoomBounds.EnemyAttackRange) continue;
+                log.AddRange(ApplyHit(inst.Enemy.Attack, inst.Enemy.Name, target, session, alive));
+                inst.MadKingAttackFiredTime = now;
+                inst.MadKingAttackIndex     = (inst.MadKingAttackIndex % 3) + 1; // cycles 1 → 2 → 3 → 1
+            }
             else if (globalReady)
             {
                 // Regular enemies — unchanged instant melee/ranged damage.
@@ -708,12 +715,16 @@ public class GameService
                     laserDirX = e.GolemLaserDirX;
                     laserDirY = e.GolemLaserDirY;
                 }
+                bool isAttacking = e.MadKingAttackFiredTime.HasValue &&
+                    (now - e.MadKingAttackFiredTime.Value).TotalMilliseconds < RoomBounds.MadKingAttackVisualMs;
+
                 return new EnemyDto(
                     e.Id.ToString(), e.Enemy.Name,
                     e.Enemy.Health, e.Enemy.MaxHealth, e.Enemy.IsAlive,
                     e.X, e.Y,
                     chargePercent, isLaserFiring,
-                    laserDirX, laserDirY
+                    laserDirX, laserDirY,
+                    isAttacking, e.MadKingAttackIndex
                 );
             }).ToList(),
             room.IsCleared,

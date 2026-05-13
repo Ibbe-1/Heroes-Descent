@@ -102,7 +102,6 @@ export class GameScene extends Phaser.Scene {
   // Treasure chest sprite — only present in TreasureChest rooms.
   private chestSprite: {
     body: Phaser.GameObjects.Sprite;
-    label: Phaser.GameObjects.Text;
     hint: Phaser.GameObjects.Text;
   } | null = null;
   private chestIsOpen = false;
@@ -235,8 +234,8 @@ export class GameScene extends Phaser.Scene {
     this.load.spritesheet('mimic-hurt',            '/assets/Mimic/hurt.png',             { frameWidth: 146, frameHeight: 146 });
     this.load.spritesheet('mimic-death',           '/assets/Mimic/death.png',            { frameWidth: 146, frameHeight: 146 });
 
-    // Treasure chest — 40×32 frames, 6 cols × 8 rows; frame 0 = closed, frame 5 = open (dark wood, row 0)
-    this.load.spritesheet('chest-sheet', '/assets/TreasureChest/Chests.png', { frameWidth: 40, frameHeight: 32 });
+    // Treasure chest — 36×25 frames, 2 rows of 8; row 0 (frames 0–7) = Basic brown/gold, row 1 = Fancy green
+    this.load.spritesheet('chest-sheet', '/assets/TreasureChest/Treasure Chest - Basic & Fancy.png', { frameWidth: 36, frameHeight: 25 });
 
     // Mad King — treasure guardian, 160×111 frames
     this.load.spritesheet('madking-idle',     '/assets/MadKing/Idle.png',     { frameWidth: 160, frameHeight: 111 });
@@ -264,6 +263,7 @@ export class GameScene extends Phaser.Scene {
     this.createMushroomAnims();
     this.createMimicAnims();
     this.createMadKingAnims();
+    this.createChestAnims();
 
     this.hpBars      = this.add.graphics().setDepth(20);
     this.aimGraphics = this.add.graphics().setDepth(6);
@@ -450,11 +450,18 @@ export class GameScene extends Phaser.Scene {
     a.create({ key: 'mimic-death',            frames: a.generateFrameNumbers('mimic-death',            { start: 0, end: 5  }), frameRate: 8,  repeat: 0  });
   }
 
+  private createChestAnims() {
+    const a = this.anims;
+    // 8 frames of 36×50 in a single row; frames 0–5 go from closed to fully open (peak interior visible).
+    // Frames 6–7 are the lid settling flat, so we stop at 5 to keep the chest looking open.
+    a.create({ key: 'chest-open', frames: a.generateFrameNumbers('chest-sheet', { start: 0, end: 5 }), frameRate: 10, repeat: 0 });
+  }
+
   private createMadKingAnims() {
     const a = this.anims;
     a.create({ key: 'madking-idle',     frames: a.generateFrameNumbers('madking-idle',     { start: 0, end: 7 }), frameRate: 8,  repeat: -1 });
     a.create({ key: 'madking-run',      frames: a.generateFrameNumbers('madking-run',      { start: 0, end: 7 }), frameRate: 10, repeat: -1 });
-    a.create({ key: 'madking-attack1',  frames: a.generateFrameNumbers('madking-attack1',  { start: 0, end: 3 }), frameRate: 10, repeat: 0  });
+    a.create({ key: 'madking-attack1',  frames: a.generateFrameNumbers('madking-attack1',  { start: 0, end: 3 }), frameRate: 10, repeat: -1 });
     a.create({ key: 'madking-attack2',  frames: a.generateFrameNumbers('madking-attack2',  { start: 0, end: 3 }), frameRate: 10, repeat: 0  });
     a.create({ key: 'madking-attack3',  frames: a.generateFrameNumbers('madking-attack3',  { start: 0, end: 3 }), frameRate: 10, repeat: 0  });
     a.create({ key: 'madking-take-hit', frames: a.generateFrameNumbers('madking-take-hit', { start: 0, end: 3 }), frameRate: 10, repeat: 0  });
@@ -658,7 +665,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     // ── Enemies ──
-    for (const e of s.currentRoom.enemies) this.syncEnemy(e);
+    for (const e of s.currentRoom.enemies) this.syncEnemy(e, s.players);
     for (const [id] of this.enemySprites) {
       if (!s.currentRoom.enemies.some(e => e.id === id)) this.destroyEnemy(id);
     }
@@ -730,7 +737,7 @@ export class GameScene extends Phaser.Scene {
 
   // ── Enemy sprites ──────────────────────────────────────────────────────────
 
-  private syncEnemy(e: EnemyState) {
+  private syncEnemy(e: EnemyState, players: PlayerState[]) {
     let sp = this.enemySprites.get(e.id);
 
     if (!sp) {
@@ -1042,20 +1049,34 @@ export class GameScene extends Phaser.Scene {
           }
 
         } else if (e.name === 'Mad King') {
-          const LOCKED_MK = new Set(['madking-take-hit', 'madking-death', 'madking-attack1', 'madking-attack2', 'madking-attack3']);
+          const LOCKED_MK = new Set(['madking-take-hit', 'madking-death', 'madking-attack2', 'madking-attack3']);
+          const attackKey = `madking-attack${e.attackIndex}` as const;
           if (e.health < sp.prevHp && !LOCKED_MK.has(sp.animKey)) {
             sp.animKey = 'madking-take-hit';
             sp.sprite!.play('madking-take-hit');
             sp.sprite!.once('animationcomplete', () => {
               if (sp!.animKey === 'madking-take-hit') {
+                const nearestDist = Math.min(...players.map(p => Math.hypot(e.x - p.x, e.y - p.y)));
                 const moving = Math.abs(e.x - sp!.prevX) > 1 || Math.abs(e.y - sp!.prevY) > 1;
-                sp!.animKey = moving ? 'madking-run' : 'madking-idle';
+                sp!.animKey = nearestDist <= 80 ? 'madking-attack1' : moving ? 'madking-run' : 'madking-idle';
+                sp!.sprite?.play(sp!.animKey);
+              }
+            });
+          } else if (e.isAttacking && sp.animKey !== attackKey && !LOCKED_MK.has(sp.animKey)) {
+            sp.animKey = attackKey;
+            sp.sprite!.play(attackKey);
+            sp.sprite!.once('animationcomplete', () => {
+              if (sp!.animKey === attackKey) {
+                const nearestDist = Math.min(...players.map(p => Math.hypot(e.x - p.x, e.y - p.y)));
+                const moving = Math.abs(e.x - sp!.prevX) > 1 || Math.abs(e.y - sp!.prevY) > 1;
+                sp!.animKey = nearestDist <= 80 ? 'madking-attack1' : moving ? 'madking-run' : 'madking-idle';
                 sp!.sprite?.play(sp!.animKey);
               }
             });
           } else if (!LOCKED_MK.has(sp.animKey)) {
+            const nearestDist = Math.min(...players.map(p => Math.hypot(e.x - p.x, e.y - p.y)));
             const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
-            const want   = moving ? 'madking-run' : 'madking-idle';
+            const want = nearestDist <= 80 ? 'madking-attack1' : moving ? 'madking-run' : 'madking-idle';
             if (sp.animKey !== want) { sp.animKey = want; sp.sprite!.play(want); }
           }
 
@@ -1439,13 +1460,11 @@ export class GameScene extends Phaser.Scene {
       // frame 0 = closed dark-wood chest (row 0, col 0 of the 60×32 sheet)
       const body = this.add.sprite(cx, cy, 'chest-sheet', 0)
         .setDepth(7).setScale(2);
-      const label = this.add.text(cx, cy - 38, 'CHEST', {
-        fontFamily: 'Courier New', fontSize: '11px', color: '#c9a84c',
+      const hint = this.add.text(cx, cy - 42, 'LOCKED', {
+        fontFamily: 'Arial Black', fontSize: '11px', color: '#444444',
+        stroke: '#000000', strokeThickness: 3,
       }).setOrigin(0.5, 1).setDepth(8);
-      const hint = this.add.text(cx, cy + 38, 'LOCKED', {
-        fontFamily: 'Courier New', fontSize: '9px', color: '#444444',
-      }).setOrigin(0.5, 0).setDepth(8);
-      this.chestSprite = { body, label, hint };
+      this.chestSprite = { body, hint };
     }
 
     if (!room.isCleared) return;
@@ -1458,7 +1477,7 @@ export class GameScene extends Phaser.Scene {
     const chestHasBeenOpened = !!room.chestOpenerId || (me?.chestClaimed ?? false);
     if (chestHasBeenOpened && !this.chestIsOpen) {
       this.chestIsOpen = true;
-      body.setFrame(5);  // frame 5 = fully open dark-wood chest (row 0, col 5)
+      body.play('chest-open');
       this.tweens.add({
         targets: body, scaleX: 2.4, scaleY: 2.4, duration: 160,
         yoyo: true, onComplete: () => body.setScale(2),
@@ -1472,14 +1491,14 @@ export class GameScene extends Phaser.Scene {
     body.off('pointerdown');
 
     if (claimed) {
-      hint.setText('▶ VIEW CHEST').setStyle({ color: '#555555' });
+      hint.setText('▶ VIEW CHEST').setStyle({ color: '#c9a84c', stroke: '#000000', strokeThickness: 3 });
       body.setInteractive({ useHandCursor: true });
       body.on('pointerdown', () => this.game.events.emit('viewClaimedChest'));
     } else if (inUse) {
-      hint.setText('IN USE').setStyle({ color: '#666666' });
+      hint.setText('IN USE').setStyle({ color: '#666666', stroke: '#000000', strokeThickness: 3 });
       body.disableInteractive();
     } else {
-      hint.setText('▶ CLICK TO OPEN').setStyle({ color: '#c9a84c' });
+      hint.setText('▶ CLICK TO OPEN').setStyle({ color: '#c9a84c', stroke: '#000000', strokeThickness: 3 });
       body.setInteractive({ useHandCursor: true });
       body.on('pointerdown', () => this.engine?.interactChest());
     }
@@ -1488,7 +1507,6 @@ export class GameScene extends Phaser.Scene {
   private destroyChest() {
     if (this.chestSprite) {
       this.chestSprite.body.destroy();
-      this.chestSprite.label.destroy();
       this.chestSprite.hint.destroy();
       this.chestSprite = null;
     }

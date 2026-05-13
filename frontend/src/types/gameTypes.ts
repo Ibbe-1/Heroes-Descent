@@ -40,6 +40,10 @@ export interface EnemyState {
   isLaserFiring: boolean;
   laserDirX: number;
   laserDirY: number;
+
+  // Mad King (ChestGuardian) only — true for ~400 ms after a melee hit lands.
+  isAttacking: boolean;
+  attackIndex: number;  // cycles 1–3, selects which attack animation to play
 }
 
 export interface RoomState {

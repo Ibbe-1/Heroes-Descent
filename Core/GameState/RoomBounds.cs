@@ -69,6 +69,9 @@ public static class RoomBounds
     public const float GolemLaserRange = 500f; // maximum beam length in pixels
     public const float GolemLaserWidth = 80f;  // half-width of the hit corridor (±80 px off center)
 
+    // Mad King (ChestGuardian) — how long isAttacking stays true after a melee hit
+    public const float MadKingAttackVisualMs = 400f;
+
     // Enemies won't spawn within this radius of the room centre,
     // giving the party a safe landing zone at the start of each room
     public const float EnemyMinSpawnDist = 200f;
