@@ -271,7 +271,7 @@ export class GameScene extends Phaser.Scene {
     this.kS     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);  // move down
     this.kD     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.D);  // move right
     this.kSpace = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE); // basic attack toward mouse cursor
-    this.kQ     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q);    // class ability (Warrior: Shield Block, Wizard: Fireball, Archer: Multi-Shot)
+    this.kQ     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q);    // class ability (Warrior: Undying Rage, Wizard: Fireball, Archer: Multi-Shot)
 
     // Stop the browser from intercepting these keys.
     // Without this, pressing W/S would scroll the page and Space would jump to the bottom.

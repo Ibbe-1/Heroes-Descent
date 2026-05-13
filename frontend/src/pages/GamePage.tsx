@@ -22,7 +22,7 @@ import { useState, useEffect, useRef } from 'react';
 import Phaser from 'phaser';
 import { GameScene } from '../game/GameScene';
 import { GameEngine } from '../game/gameEngine';
-import type { GameState, HeroClass, PlayerState } from '../types/gameTypes';
+import type { GameState, HeroClass } from '../types/gameTypes';
 
 // Shared style constants so we don't repeat hex strings everywhere.
 const F = "'Courier New', Courier, monospace";
@@ -37,7 +37,7 @@ const WHITE = '#e8e8e8';
 // These mirror the values the server uses but are only for display — the server
 // is the authoritative source for all in-game numbers.
 const HERO_INFO: Record<HeroClass, { icon: string; hp: number; atk: number; def: number; spd: number; ability: string; tip: string }> = {
-  Warrior: { icon: '⚔', hp: 120, atk: 25, def: 10, spd: 7,  ability: 'Shield Block', tip: 'Next hit halved. Gains Rage on damage.' },
+  Warrior: { icon: '⚔', hp: 120, atk: 25, def: 10, spd: 7,  ability: 'Undying Rage', tip: 'Untargetable for 5 s. Gains Rage on damage.' },
   Wizard:  { icon: '🔥', hp: 60,  atk: 10, def: 3,  spd: 10, ability: 'Fireball',    tip: 'Blasts all enemies in the room.' },
   Archer:  { icon: '🏹', hp: 85,  atk: 18, def: 6,  spd: 14, ability: 'Multi-Shot',  tip: 'Fires at 2 targets. High crit chance.' },
 };
@@ -50,50 +50,10 @@ function resourceColor(name: string) {
   return '#27ae60';  // Energy (Archer)
 }
 
-// ── Reusable sub-components ───────────────────────────────────────────────────
-
-// A thin colored progress bar used for both HP and resource displays.
-// val/max are numbers; color is a CSS color string.
-function MiniBar({ val, max, color }: { val: number; max: number; color: string }) {
-  const pct = max > 0 ? Math.max(0, Math.min(100, (val / max) * 100)) : 0;
-  return (
-    <div style={{ flex: 1, height: 5, background: 'rgba(255,255,255,0.08)', borderRadius: 1 }}>
-      <div style={{ width: `${pct}%`, height: '100%', background: color, transition: 'width 0.2s' }} />
-    </div>
-  );
-}
-
-// One card in the bottom party bar showing a single player's status.
-// isMe highlights the local player's card in gold so it stands out.
-function PlayerHud({ p, isMe }: { p: PlayerState; isMe: boolean }) {
-  const rc = resourceColor(p.resourceName);
-  return (
-    <div style={{
-      display: 'flex', flexDirection: 'column', gap: 3,
-      padding: '5px 8px',
-      background: isMe ? 'rgba(201,168,76,0.08)' : 'rgba(255,255,255,0.03)',
-      border: `1px solid ${isMe ? GOLD_DIM : 'rgba(255,255,255,0.06)'}`,
-      borderRadius: 2,
-      minWidth: 140, maxWidth: 200,
-      opacity: p.isAlive ? 1 : 0.4,  // dim dead players
-      fontFamily: F,
-    }}>
-      <div style={{ fontSize: 10, color: isMe ? GOLD : WHITE, letterSpacing: '0.05em' }}>
-        {p.username} <span style={{ color: GRAY }}>({p.heroClass})</span>
-        {!p.isAlive && <span style={{ color: RED }}> DEAD</span>}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-        <span style={{ fontSize: 9, color: RED, width: 14 }}>HP</span>
-        <MiniBar val={p.currentHp} max={p.maxHp} color={RED} />
-        <span style={{ fontSize: 9, color: GRAY, whiteSpace: 'nowrap' }}>{p.currentHp}/{p.maxHp}</span>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-        <span style={{ fontSize: 9, color: rc, width: 14 }}>{p.resourceName.slice(0,2)}</span>
-        <MiniBar val={p.resource} max={p.maxResource} color={rc} />
-        <span style={{ fontSize: 9, color: GRAY, whiteSpace: 'nowrap' }}>{p.resource}/{p.maxResource}</span>
-      </div>
-    </div>
-  );
+function resourceColorRgba(name: string, alpha: number) {
+  if (name === 'Mana') return `rgba(41,128,185,${alpha})`;
+  if (name === 'Rage') return `rgba(230,126,34,${alpha})`;
+  return `rgba(39,174,96,${alpha})`;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -333,85 +293,220 @@ export default function GamePage({ username, userId, onBack }: Props) {
           )}
         </div>
 
-        {/* Bottom HUD overlay — lives above the canvas via zIndex. */}
-        <div style={{ flexShrink: 0, background: 'rgba(0,0,0,0.75)', borderTop: `1px solid ${GOLD_DIM}`, padding: '6px 12px', zIndex: 10, fontFamily: F }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {/* Bottom HUD — portrait, ability slots, item hotbar, inventory, party mini-portraits, log. */}
+        <div style={{
+          flexShrink: 0,
+          background: 'rgba(0,0,0,0.88)',
+          borderTop: `2px solid ${GOLD_DIM}`,
+          padding: '8px 14px',
+          zIndex: 10,
+          fontFamily: F,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          minHeight: 96,
+        }}>
 
-            {/* Party status cards — one per player in the session. */}
-            {me && <PlayerHud p={me} isMe />}
-            {others.map(p => <PlayerHud key={p.userId} p={p} isMe={false} />)}
+          {/* ── Player portrait + ability slots ──────────────────────────────── */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
 
-            {/* Controls hint and ability button */}
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 8, borderLeft: `1px solid rgba(255,255,255,0.07)` }}>
-              <span style={{ fontSize: 9, color: GRAY }}>
-                <kbd style={{ color: WHITE }}>WASD</kbd> Move &nbsp;
-                <kbd style={{ color: WHITE }}>Mouse</kbd> Aim &nbsp;
-                <kbd style={{ color: WHITE }}>SPACE</kbd> Attack &nbsp;
-                <kbd style={{ color: WHITE }}>Q</kbd> {me?.abilityName ?? 'Ability'}
-                {me && !me.canUseAbility && <span style={{ color: GRAY }}> (not ready)</span>}
+            {/* Portrait circle */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <div style={{
+                width: 64, height: 64, borderRadius: '50%',
+                background: me?.isAlive ? 'rgba(201,168,76,0.1)' : 'rgba(192,57,43,0.08)',
+                border: `2px solid ${me?.isAlive ? GOLD : RED}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '1.8rem', position: 'relative', overflow: 'hidden',
+              }}>
+                {me ? HERO_INFO[me.heroClass as HeroClass].icon : '?'}
+                {me && !me.isAlive && (
+                  <div style={{
+                    position: 'absolute', inset: 0, borderRadius: '50%',
+                    background: 'rgba(0,0,0,0.65)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    color: RED, fontSize: 20,
+                  }}>☠</div>
+                )}
+              </div>
+              <span style={{
+                fontSize: 9, color: me?.isAlive ? GOLD : RED, letterSpacing: '0.04em',
+                maxWidth: 64, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {me?.username ?? '—'}
               </span>
+              <div style={{ width: 64, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <div style={{ height: 5, background: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${me ? Math.max(0, (me.currentHp / me.maxHp) * 100) : 0}%`,
+                    height: '100%', background: RED, transition: 'width 0.2s', borderRadius: 2,
+                  }} />
+                </div>
+                <div style={{ height: 5, background: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${me ? Math.max(0, (me.resource / me.maxResource) * 100) : 0}%`,
+                    height: '100%', background: me ? resourceColor(me.resourceName) : GRAY,
+                    transition: 'width 0.2s', borderRadius: 2,
+                  }} />
+                </div>
+              </div>
+            </div>
 
-              {/* Clickable ability button — mirrors the Q key for mouse users.
-                  Disabled when the hero's resource is too low (canUseAbility = false). */}
-              {me && (
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {/* Ability slots */}
+            {me && (
+              <div style={{ display: 'flex', gap: 8 }}>
+
+                {/* Slot 1: basic attack (SPACE) */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                  <div style={{
+                    width: 46, height: 46, borderRadius: '50%',
+                    background: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.18)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '1.1rem',
+                  }}>
+                    {HERO_INFO[me.heroClass as HeroClass].icon}
+                  </div>
+                  <span style={{ fontSize: 8, color: GRAY, letterSpacing: '0.05em' }}>SPACE</span>
+                  <div style={{ width: 46, height: 3, background: 'rgba(255,255,255,0.08)', borderRadius: 1 }}>
+                    <div style={{ width: '100%', height: '100%', background: '#666', borderRadius: 1 }} />
+                  </div>
+                </div>
+
+                {/* Slot 2: Q ability — glows when ready */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
                   <button
                     onClick={() => engineRef.current?.useAbility()}
                     disabled={!me.canUseAbility || !me.isAlive}
+                    title={me.abilityName}
                     style={{
-                      background: 'transparent',
-                      border: `1px solid ${me.canUseAbility ? resourceColor(me.resourceName) : GRAY}`,
-                      color: me.canUseAbility ? resourceColor(me.resourceName) : GRAY,
-                      fontFamily: F, fontSize: 9, letterSpacing: '0.06em',
-                      padding: '2px 8px', cursor: me.canUseAbility ? 'pointer' : 'not-allowed',
+                      width: 46, height: 46, borderRadius: '50%',
+                      background: me.canUseAbility ? resourceColorRgba(me.resourceName, 0.18) : 'rgba(255,255,255,0.03)',
+                      border: `2px solid ${me.canUseAbility ? resourceColor(me.resourceName) : 'rgba(255,255,255,0.12)'}`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '1rem', color: me.canUseAbility ? resourceColor(me.resourceName) : GRAY,
+                      cursor: me.canUseAbility && me.isAlive ? 'pointer' : 'not-allowed',
+                      padding: 0, outline: 'none', fontFamily: F,
+                      boxShadow: me.canUseAbility ? `0 0 10px ${resourceColor(me.resourceName)}55` : 'none',
+                      transition: 'border-color 0.25s, box-shadow 0.25s, background 0.25s',
                     }}
-                  >✦ {me.abilityName}</button>
+                  >✦</button>
+                  <span style={{ fontSize: 8, color: me.canUseAbility ? resourceColor(me.resourceName) : GRAY, letterSpacing: '0.05em' }}>Q</span>
+                  <div style={{ width: 46, height: 3, background: 'rgba(255,255,255,0.08)', borderRadius: 1, overflow: 'hidden' }}>
+                    <div style={{
+                      width: `${Math.max(0, (me.resource / me.maxResource) * 100)}%`,
+                      height: '100%', background: resourceColor(me.resourceName),
+                      transition: 'width 0.2s', borderRadius: 1,
+                    }} />
+                  </div>
                 </div>
-              )}
-            </div>
 
-            {/* Right side: advance/end-state buttons.
-                Only one of these is visible at a time:
-                  Victory  → shown when isVictory is true
-                  Defeated → shown when isGameOver is true
-                  Next Room → shown when the current room is cleared but game isn't over
-                  "X enemies remaining" → shown while the room is still active */}
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+              </div>
+            )}
+          </div>
+
+          <div style={{ width: 1, alignSelf: 'stretch', background: 'rgba(255,255,255,0.07)', margin: '0 4px' }} />
+
+          {/* ── Item hotbar (4 slots) ─────────────────────────────────────────── */}
+          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+            {[1, 2, 3, 4].map(n => (
+              <div key={n} style={{
+                width: 52, height: 52,
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                borderRadius: 4,
+                display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'flex-end',
+                padding: '0 0 3px',
+              }}>
+                <span style={{ fontSize: 8, color: 'rgba(255,255,255,0.22)' }}>{n}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ width: 1, alignSelf: 'stretch', background: 'rgba(255,255,255,0.07)', margin: '0 4px' }} />
+
+          {/* ── Inventory panel ───────────────────────────────────────────────── */}
+          <div style={{
+            width: 90, height: 70,
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid rgba(255,255,255,0.12)',
+            borderRadius: 4,
+            display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center', gap: 5,
+            flexShrink: 0,
+          }}>
+            <span style={{ fontSize: 7, color: 'rgba(255,255,255,0.25)', letterSpacing: '0.1em', textTransform: 'uppercase' }}>Inventory</span>
+            {me && <span style={{ fontSize: 9, color: GOLD }}>✦ {me.gold}g</span>}
+          </div>
+
+          {/* ── Other party members (mini portraits) ─────────────────────────── */}
+          {others.length > 0 && (
+            <>
+              <div style={{ width: 1, alignSelf: 'stretch', background: 'rgba(255,255,255,0.07)', margin: '0 4px' }} />
+              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                {others.map(p => (
+                  <div key={p.userId} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, opacity: p.isAlive ? 1 : 0.45 }}>
+                    <div style={{
+                      width: 38, height: 38, borderRadius: '50%',
+                      background: 'rgba(255,255,255,0.05)',
+                      border: `1px solid ${p.isAlive ? 'rgba(255,255,255,0.22)' : RED}`,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: '0.9rem', position: 'relative', overflow: 'hidden',
+                    }}>
+                      {HERO_INFO[p.heroClass as HeroClass]?.icon}
+                      {!p.isAlive && (
+                        <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: RED, fontSize: 12 }}>☠</div>
+                      )}
+                    </div>
+                    <span style={{ fontSize: 7, color: p.isAlive ? WHITE : RED, maxWidth: 40, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '0.03em' }}>
+                      {p.username}
+                    </span>
+                    <div style={{ width: 38, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <div style={{ height: 3, background: 'rgba(255,255,255,0.08)', borderRadius: 1, overflow: 'hidden' }}>
+                        <div style={{ width: `${Math.max(0, (p.currentHp / p.maxHp) * 100)}%`, height: '100%', background: RED, borderRadius: 1 }} />
+                      </div>
+                      <div style={{ height: 3, background: 'rgba(255,255,255,0.08)', borderRadius: 1, overflow: 'hidden' }}>
+                        <div style={{ width: `${Math.max(0, (p.resource / p.maxResource) * 100)}%`, height: '100%', background: resourceColor(p.resourceName), borderRadius: 1 }} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* ── Combat log + room controls (far right) ───────────────────────── */}
+          <div style={{ marginLeft: 'auto', display: 'flex', flexDirection: 'column', gap: 5, alignItems: 'flex-end' }}>
+            {state && state.log.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 1, maxWidth: 280 }}>
+                {state.log.slice(-4).map((line, i) => (
+                  <div key={i} style={{
+                    fontSize: 8, textAlign: 'right',
+                    color: line.startsWith('»') ? GOLD : line.includes('defeated') || line.includes('fallen') || line.includes('wiped') ? RED : '#888',
+                  }}>
+                    {line}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               {isOver && (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                  <span style={{ color: RED, fontSize: 12, letterSpacing: '0.1em' }}>☠ DEFEATED</span>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
+                  <span style={{ color: RED, fontSize: 10, letterSpacing: '0.1em' }}>☠ DEFEATED</span>
                   <button onClick={handleLeave} style={advBtn(RED)}>Return Home</button>
                 </div>
               )}
-              {isWin && !showVictoryOverlay && (
-                <button onClick={handleLeave} style={advBtn(GOLD)}>Return Home</button>
-              )}
+              {isWin && !showVictoryOverlay && <button onClick={handleLeave} style={advBtn(GOLD)}>Return Home</button>}
               {!isWin && !isOver && cleared && (
-                <button onClick={() => engineRef.current?.moveToNextRoom()} style={advBtn('#27ae60')}>
-                  → Next Room
-                </button>
+                <button onClick={() => engineRef.current?.moveToNextRoom()} style={advBtn('#27ae60')}>→ Next Room</button>
               )}
               {!isWin && !isOver && !cleared && room && (
-                <span style={{ fontSize: 9, color: GRAY }}>
-                  {room.enemies.filter(e => e.isAlive).length} enemies remaining
-                </span>
+                <span style={{ fontSize: 8, color: GRAY }}>{room.enemies.filter(e => e.isAlive).length} enemies remaining</span>
               )}
             </div>
-
           </div>
 
-          {/* Combat log: last 4 lines from the server's RecentLog list.
-              Lines starting with '»' are room announcements (gold).
-              Lines mentioning defeat keywords are red. Everything else is grey. */}
-          {state && state.log.length > 0 && (
-            <div style={{ marginTop: 4, borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: 4, display: 'flex', flexDirection: 'column', gap: 1 }}>
-              {state.log.slice(-4).map((line, i) => (
-                <div key={i} style={{ fontSize: 9, color: line.startsWith('»') ? GOLD : line.includes('defeated') || line.includes('fallen') || line.includes('wiped') ? RED : '#aaaaaa', paddingLeft: line.startsWith('»') ? 0 : 8 }}>
-                  {line}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
     );
