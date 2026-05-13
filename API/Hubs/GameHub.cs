@@ -226,18 +226,76 @@ public class GameHub : Hub
                 session.LastEnemyTick = DateTime.UtcNow.AddSeconds(2);
 
                 session.AddLog($"» Room {session.CurrentRoomIndex + 1}/{session.Rooms.Count} — {room.Type}");
-
-                if (room.Type == RoomType.TreasureChest && !room.ChestOpened)
-                {
-                    room.OpenChest();
-                    foreach (var p in session.Players)
-                    {
-                        p.Gold += room.ChestGold;
-                        session.AddLog($"✦ {p.Username} found {room.ChestGold} gold coins in the chest!");
-                    }
-                }
             }
 
+            dto = _game.BuildDto(session);
+        }
+
+        if (dto is not null)
+            await Clients.Group(sessionId).SendAsync("GameStateUpdate", dto);
+    }
+
+    // ── Chest interaction ─────────────────────────────────────────────────────
+
+    // Called when a player clicks the treasure chest sprite.
+    // Locks the chest for this player so the loot window opens only for them.
+    public async Task InteractChest(string sessionId)
+    {
+        var session = _sessions.GetSession(sessionId);
+        if (session is null) return;
+
+        var userId = Context.UserIdentifier!;
+
+        Application.Dtos.GameStateDto? dto = null;
+        lock (session.Lock)
+        {
+            var (acted, log) = _game.TryInteractChest(session, userId);
+            if (!acted) return;
+            session.AddLogRange(log);
+            dto = _game.BuildDto(session);
+        }
+
+        if (dto is not null)
+            await Clients.Group(sessionId).SendAsync("GameStateUpdate", dto);
+    }
+
+    // Called when the player clicks the gold item in the loot window.
+    // Awards the gold to the player and closes their loot window.
+    public async Task ClaimChest(string sessionId)
+    {
+        var session = _sessions.GetSession(sessionId);
+        if (session is null) return;
+
+        var userId = Context.UserIdentifier!;
+
+        Application.Dtos.GameStateDto? dto = null;
+        lock (session.Lock)
+        {
+            var (acted, log) = _game.TryClaimChest(session, userId);
+            if (!acted) return;
+            session.AddLogRange(log);
+            dto = _game.BuildDto(session);
+        }
+
+        if (dto is not null)
+            await Clients.Group(sessionId).SendAsync("GameStateUpdate", dto);
+    }
+
+    // Called when the player clicks Close without claiming the gold.
+    // Releases the chest lock so another player can open it.
+    public async Task CloseChest(string sessionId)
+    {
+        var session = _sessions.GetSession(sessionId);
+        if (session is null) return;
+
+        var userId = Context.UserIdentifier!;
+
+        Application.Dtos.GameStateDto? dto = null;
+        lock (session.Lock)
+        {
+            var (acted, log) = _game.TryCloseChest(session, userId);
+            if (!acted) return;
+            session.AddLogRange(log);
             dto = _game.BuildDto(session);
         }
 

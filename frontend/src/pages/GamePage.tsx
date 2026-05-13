@@ -74,6 +74,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
   // a new GameStateUpdate message. React re-renders the HUD with the new data,
   // and a separate useEffect forwards the state into the Phaser scene.
   const [gameState, setGameState]     = useState<GameState | null>(null);
+  const [claimedChestOpen, setClaimedChestOpen] = useState(false);
   // When isVictory first becomes true the overlay appears. "Continue Roaming"
   // dismisses it so players can explore the Exit Hall before leaving.
   const [showVictoryOverlay, setShowVictoryOverlay] = useState(true);
@@ -125,6 +126,9 @@ export default function GamePage({ username, userId, onBack }: Props) {
       }
     });
 
+    // Fired by GameScene when a player who already claimed clicks the chest again.
+    game.events.on('viewClaimedChest', () => setClaimedChestOpen(true));
+
     // Destroy the Phaser game when the component unmounts or phase changes away.
     // true = also remove the <canvas> element from the DOM.
     return () => {
@@ -132,6 +136,9 @@ export default function GamePage({ username, userId, onBack }: Props) {
       gameRef.current = null;
     };
   }, [phase]);
+
+  // Close the empty-chest view whenever the party advances to a new room.
+  useEffect(() => { setClaimedChestOpen(false); }, [gameState?.currentRoomIndex]);
 
   // ── Effect: forward server state into Phaser ──────────────────────────────
 
@@ -220,6 +227,10 @@ export default function GamePage({ username, userId, onBack }: Props) {
     const cleared = room?.isCleared ?? false;
     const isOver = state?.isGameOver ?? false;
     const isWin = state?.isVictory ?? false;
+    const lootWindowOpen = room?.chestOpenerId === userId;
+    const showLootWindow = lootWindowOpen || claimedChestOpen;
+    // Players who have already claimed their gold from this chest.
+    const claimers = state?.players.filter(p => p.chestClaimed) ?? [];
 
     return (
       <div style={{ width: '100vw', height: '100vh', background: BG, position: 'relative', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
@@ -231,7 +242,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
               <>
                 {/* Color-coded room type label */}
                 <span style={{ color: room?.type === 'Boss' ? RED : room?.type === 'Elite' ? '#f39c12' : GOLD }}>
-                  {room?.type === 'Boss' ? '☠ BOSS' : room?.type === 'Elite' ? '★ ELITE' : room?.type === 'ExitHall' ? '✦ EXIT HALL' : '○ NORMAL'}
+                  {room?.type === 'Boss' ? '☠ BOSS' : room?.type === 'Elite' ? '★ ELITE' : room?.type === 'TreasureChest' ? '✦ CHEST' : room?.type === 'ExitHall' ? '✦ EXIT HALL' : '○ NORMAL'}
                 </span>
                 <span style={{ color: GRAY, marginLeft: 8 }}>Room {(state.currentRoomIndex + 1)}/{state.totalRooms}</span>
               </>
@@ -508,6 +519,99 @@ export default function GamePage({ username, userId, onBack }: Props) {
           </div>
 
         </div>
+
+        {/* Loot window — two modes:
+            - Active (lootWindowOpen): player holds the lock, gold is claimable.
+            - View-only (claimedChestOpen): player already claimed, shows greyed-out history. */}
+        {showLootWindow && room && (
+          <div style={{
+            position: 'absolute', inset: 0,
+            background: 'rgba(0,0,0,0.78)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 50, fontFamily: F,
+          }}>
+            <div style={{
+              background: BG,
+              border: `1px solid ${GOLD_DIM}`,
+              borderRadius: 4,
+              padding: '2rem',
+              width: 320,
+            }}>
+              <div style={{ textAlign: 'center', marginBottom: '1.4rem' }}>
+                <div style={{ fontSize: '2rem', marginBottom: '0.4rem' }}>📦</div>
+                <div style={{ color: claimedChestOpen ? GRAY : GOLD, fontSize: 13, letterSpacing: '0.2em', textTransform: 'uppercase' }}>
+                  {claimedChestOpen ? 'Chest Emptied' : 'Chest Opened!'}
+                </div>
+              </div>
+
+              {claimedChestOpen ? (
+                /* View-only: greyed out gold + who already looted it */
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '0.8rem 1rem',
+                  border: `1px solid rgba(255,255,255,0.06)`,
+                  background: 'rgba(255,255,255,0.02)',
+                  borderRadius: 3,
+                  marginBottom: '1.4rem',
+                  opacity: 0.45,
+                }}>
+                  <span style={{ fontSize: '1.3rem' }}>🪙</span>
+                  <div>
+                    <div style={{ color: GRAY, fontSize: 14, letterSpacing: '0.06em', textDecoration: 'line-through' }}>
+                      {room.chestGold} Gold Coins
+                    </div>
+                    {claimers.length > 0 && (
+                      <div style={{ color: GRAY, fontSize: 10, marginTop: 3 }}>
+                        Looted by {claimers.map(p => p.username).join(', ')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                /* Active: clickable gold item */
+                <button
+                  onClick={() => engineRef.current?.claimChest()}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    width: '100%', padding: '0.8rem 1rem',
+                    border: `1px solid ${GOLD_DIM}`,
+                    background: 'rgba(201,168,76,0.06)',
+                    borderRadius: 3,
+                    marginBottom: '1.4rem',
+                    cursor: 'pointer',
+                    fontFamily: F,
+                    textAlign: 'left',
+                  }}
+                >
+                  <span style={{ fontSize: '1.3rem' }}>🪙</span>
+                  <div>
+                    <div style={{ color: GOLD, fontSize: 14, letterSpacing: '0.06em' }}>
+                      {room.chestGold} Gold Coins
+                    </div>
+                    <div style={{ color: GRAY, fontSize: 10, marginTop: 3 }}>
+                      Click to pick up
+                    </div>
+                  </div>
+                </button>
+              )}
+
+              <button
+                onClick={() => {
+                  if (claimedChestOpen) setClaimedChestOpen(false);
+                  else engineRef.current?.closeChest();
+                }}
+                style={{
+                  width: '100%', background: 'transparent',
+                  border: `1px solid ${GOLD_DIM}`, color: GOLD,
+                  fontFamily: F, fontSize: 10, letterSpacing: '0.12em',
+                  textTransform: 'uppercase', padding: '0.5rem', cursor: 'pointer',
+                }}
+              >
+                ✦ Close
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

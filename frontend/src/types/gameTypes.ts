@@ -53,12 +53,18 @@ export interface EnemyState {
   isLaserFiring: boolean;
   laserDirX: number;
   laserDirY: number;
+
+  // Mad King (ChestGuardian) only — true for ~400 ms after a melee hit lands.
+  isAttacking: boolean;
+  attackIndex: number;  // cycles 1–3, selects which attack animation to play
 }
 
 export interface RoomState {
   type: 'Normal' | 'Elite' | 'Boss' | 'TreasureChest';
   enemies: EnemyState[];
   isCleared: boolean;
+  chestGold: number;       // gold inside the chest; 0 for non-TreasureChest rooms
+  chestOpenerId?: string;  // userId of the player whose loot window is open; undefined if nobody
 }
 
 // One player in the session, including all info needed to render their HUD card
@@ -89,6 +95,7 @@ export interface PlayerState {
   y: number;
 
   gold: number;
+  chestClaimed: boolean;  // true once this player has claimed their gold from the current chest
 }
 
 // The full game state sent to all clients after every significant event.

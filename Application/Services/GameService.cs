@@ -55,7 +55,8 @@ public class GameService
             player.Gold += gold;
             log.Add($"{nearest.Enemy.Name} is defeated! (+{gold}g)");
             player.Hero.GainExperience(nearest.Enemy.ExperienceReward);
-            if (session.CurrentRoom.IsCleared) log.Add("Room cleared — advance when ready.");
+            if (session.CurrentRoom.IsCleared)
+                log.Add("Room cleared — advance when ready.");
         }
 
         return (true, log);
@@ -235,12 +236,45 @@ public class GameService
 
         if (!target.Enemy.IsAlive)
         {
-            log.Add($"{target.Enemy.Name} is defeated!");
+            int gold = target.Enemy.GoldReward;
+            player.Gold += gold;
+            log.Add($"{target.Enemy.Name} is defeated! (+{gold}g)");
             player.Hero.GainExperience(target.Enemy.ExperienceReward);
-            if (session.CurrentRoom.IsCleared) log.Add("Room cleared — advance when ready.");
+            if (session.CurrentRoom.IsCleared)
+                log.Add("Room cleared — advance when ready.");
         }
 
         return (true, log);
+    }
+
+    // ── Chest interaction ─────────────────────────────────────────────────────
+
+    // Called when a player clicks the opened treasure chest.
+    // Locks the chest so only this player can browse it. Fails silently if
+    // the room isn't a cleared TreasureChest or another player holds the lock.
+    public (bool acted, List<string> log) TryInteractChest(GameSession session, string userId)
+    {
+        if (!session.CurrentRoom.TryLockChest(userId)) return (false, []);
+        return (true, []);
+    }
+
+    // Called when the player clicks the gold item inside the loot window.
+    // Awards ChestGold to the player and releases the chest lock.
+    public (bool acted, List<string> log) TryClaimChest(GameSession session, string userId)
+    {
+        var room   = session.CurrentRoom;
+        var player = session.Players.FirstOrDefault(p => p.UserId == userId);
+        if (player is null || !room.MarkClaimed(userId)) return (false, []);
+        player.Gold += room.ChestGold;
+        return (true, [$"✦ {player.Username} claims {room.ChestGold} gold from the chest!"]);
+    }
+
+    // Called when the player clicks Close without taking the gold.
+    // Releases the chest lock so another player can open it.
+    public (bool acted, List<string> log) TryCloseChest(GameSession session, string userId)
+    {
+        if (!session.CurrentRoom.ReleaseChest(userId)) return (false, []);
+        return (true, []);
     }
 
     // Returns the closest enemy inside a cone (halfAngle radians either side of the aim direction).
@@ -421,6 +455,13 @@ public class GameService
                     log.Add($"Golem hurls a projectile at {target.Username}!");
                 }
                 // else: player is beyond GolemRangedMax — Golem chases, no attack.
+            }
+            else if (inst.Enemy is ChestGuardian && globalReady)
+            {
+                if (dist > RoomBounds.EnemyAttackRange) continue;
+                log.AddRange(ApplyHit(inst.Enemy.Attack, inst.Enemy.Name, target, session, alive));
+                inst.MadKingAttackFiredTime = now;
+                inst.MadKingAttackIndex     = (inst.MadKingAttackIndex % 3) + 1; // cycles 1 → 2 → 3 → 1
             }
             else if (globalReady)
             {
@@ -836,15 +877,21 @@ public class GameService
                     laserDirX = e.GolemLaserDirX;
                     laserDirY = e.GolemLaserDirY;
                 }
+                bool isAttacking = e.MadKingAttackFiredTime.HasValue &&
+                    (now - e.MadKingAttackFiredTime.Value).TotalMilliseconds < RoomBounds.MadKingAttackVisualMs;
+
                 return new EnemyDto(
                     e.Id.ToString(), e.Enemy.Name,
                     e.Enemy.Health, e.Enemy.MaxHealth, e.Enemy.IsAlive,
                     e.X, e.Y,
                     chargePercent, isLaserFiring,
-                    laserDirX, laserDirY
+                    laserDirX, laserDirY,
+                    isAttacking, e.MadKingAttackIndex
                 );
             }).ToList(),
-            room.IsCleared
+            room.IsCleared,
+            room.ChestGold,
+            room.ChestOpenerId
         );
 
         var players = session.Players.Select(p =>
@@ -857,7 +904,8 @@ public class GameService
                 p.Hero.CanUseAbility(), p.Hero.AbilityName,
                 AttackCooldownMs(p.Hero),
                 p.X, p.Y,
-                p.Gold
+                p.Gold,
+                room.HasClaimed(p.UserId)
             );
         }).ToList();
 
