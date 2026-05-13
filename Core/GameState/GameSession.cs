@@ -29,6 +29,12 @@ public class GameSession
     public bool IsGameOver { get; set; } = false;
     public bool IsVictory  { get; set; } = false;
 
+    // Tracks which prestige cycle this run belongs to.
+    // Starts at 1 for a fresh session; can be incremented externally when a
+    // full prestige-reset flow is implemented.  Sent to the frontend on every
+    // state broadcast so the post-battle report can display it.
+    public int PrestigeRound { get; set; } = 1;
+
     // Rolling log of recent events (max 25 lines).
     // Sent to all clients on every state broadcast so they can display it.
     public List<string> RecentLog { get; } = [];

@@ -106,7 +106,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
         width: 960,
         height: 640,
       },
-      render: { antialias: false },
+      render: { antialias: false, roundPixels: true },
     };
 
     const game = new Phaser.Game(config);
@@ -256,51 +256,13 @@ export default function GamePage({ username, userId, onBack }: Props) {
             the top and bottom bars. minHeight: 0 prevents flexbox overflow. */}
         <div ref={containerRef} style={{ flex: 1, position: 'relative', minHeight: 0 }}>
           {isWin && showVictoryOverlay && (
-            <div style={{
-              position: 'absolute', inset: 0, zIndex: 20,
-              background: 'rgba(7,7,13,0.88)',
-              display: 'flex', flexDirection: 'column',
-              alignItems: 'center', justifyContent: 'center',
-              gap: '1.5rem', fontFamily: F,
-            }}>
-              <div style={{ fontSize: '2.2rem', color: GOLD, letterSpacing: '0.22em' }}>★ VICTORY ★</div>
-              <p style={{ color: WHITE, fontSize: '0.8rem', letterSpacing: '0.1em', margin: 0 }}>
-                The dungeon has been conquered!
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', minWidth: 240 }}>
-                {state?.players.map(p => (
-                  <div key={p.userId} style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: '6px 14px',
-                    background: p.userId === userId ? 'rgba(201,168,76,0.1)' : 'rgba(255,255,255,0.04)',
-                    border: `1px solid ${p.userId === userId ? GOLD_DIM : 'rgba(255,255,255,0.08)'}`,
-                  }}>
-                    <span style={{ color: p.userId === userId ? GOLD : WHITE, fontSize: '0.78rem', letterSpacing: '0.06em' }}>
-                      {p.username}
-                    </span>
-                    <span style={{ color: GOLD, fontSize: '0.78rem' }}>✦ {p.gold} gold</span>
-                  </div>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: '0.75rem' }}>
-                <button onClick={() => setShowVictoryOverlay(false)} style={{
-                  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.22)',
-                  color: WHITE, fontFamily: F, fontSize: '0.75rem',
-                  letterSpacing: '0.12em', textTransform: 'uppercase',
-                  padding: '0.6rem 1.4rem', cursor: 'pointer',
-                }}>
-                  Continue Roaming
-                </button>
-                <button onClick={handleLeave} style={{
-                  background: 'rgba(201,168,76,0.12)', border: `1px solid ${GOLD}`,
-                  color: GOLD, fontFamily: F, fontSize: '0.75rem',
-                  letterSpacing: '0.15em', textTransform: 'uppercase',
-                  padding: '0.6rem 1.8rem', cursor: 'pointer',
-                }}>
-                  Claim Rewards &amp; Return Home
-                </button>
-              </div>
-            </div>
+            <VictoryStatsOverlay
+              players={state?.players ?? []}
+              myUserId={userId}
+              prestigeRound={state?.prestigeRound ?? 1}
+              onContinue={() => setShowVictoryOverlay(false)}
+              onLeave={handleLeave}
+            />
           )}
         </div>
 
@@ -508,9 +470,14 @@ export default function GamePage({ username, userId, onBack }: Props) {
                   <button onClick={handleLeave} style={advBtn(RED)}>Return Home</button>
                 </div>
               )}
-              {isWin && !showVictoryOverlay && <button onClick={handleLeave} style={advBtn(GOLD)}>Return Home</button>}
+              {isWin && !showVictoryOverlay && <button onClick={() => setShowVictoryOverlay(true)} style={advBtn(GOLD)}>★ Battle Report</button>}
               {!isWin && !isOver && cleared && (
-                <button onClick={() => engineRef.current?.moveToNextRoom()} style={advBtn('#27ae60')}>→ Next Room</button>
+                <button
+                  onClick={() => engineRef.current?.moveToNextRoom()}
+                  style={advBtn(room?.type === 'Boss' ? GOLD : '#27ae60')}
+                >
+                  {room?.type === 'Boss' ? '★ Claim Victory' : '→ Next Room'}
+                </button>
               )}
               {!isWin && !isOver && !cleared && room && (
                 <span style={{ fontSize: 8, color: GRAY }}>{room.enemies.filter(e => e.isAlive).length} enemies remaining</span>
@@ -690,6 +657,146 @@ export default function GamePage({ username, userId, onBack }: Props) {
 
         <button onClick={onBack} style={{ background: 'transparent', border: 'none', color: GRAY, fontFamily: F, fontSize: '0.62rem', cursor: 'pointer', letterSpacing: '0.08em', marginTop: 4 }}>← Back to Home</button>
       </div>
+    </div>
+  );
+}
+
+// ── VictoryStatsOverlay ───────────────────────────────────────────────────────
+// Full-screen post-battle report shown automatically when IsVictory becomes true.
+// Shows one column per player (max 3): damage, kills, deaths, gold. Highlights MVP.
+
+interface VictoryStatsProps {
+  players:       import('../types/gameTypes').PlayerState[];
+  myUserId:      string;
+  prestigeRound: number;
+  onContinue:    () => void;
+  onLeave:       () => void;
+}
+
+// Converts 1–39 to Roman numerals for the prestige round badge.
+function toRoman(n: number): string {
+  const vals = [10, 9, 5, 4, 1] as const;
+  const syms = ['X', 'IX', 'V', 'IV', 'I'] as const;
+  let result = '';
+  let rem    = n;
+  for (let i = 0; i < vals.length; i++) {
+    while (rem >= vals[i]) { result += syms[i]; rem -= vals[i]; }
+  }
+  return result || String(n);
+}
+
+function VictoryStatsOverlay({ players, myUserId, prestigeRound, onContinue, onLeave }: VictoryStatsProps) {
+  const capped = players.slice(0, 3);
+
+  // MVP = highest damage dealt; ties broken by kill count
+  const mvpId = capped.reduce((best, p) => {
+    const b = capped.find(x => x.userId === best)!;
+    if (p.damageDealt > b.damageDealt) return p.userId;
+    if (p.damageDealt === b.damageDealt && p.killCount > b.killCount) return p.userId;
+    return best;
+  }, capped[0]?.userId ?? '');
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 20,
+      background: 'rgba(7,7,13,0.92)',
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      gap: '1.4rem', fontFamily: F, padding: '1rem',
+    }}>
+      <div style={{ fontSize: '1.6rem', color: GOLD, letterSpacing: '0.28em', textTransform: 'uppercase' }}>
+        ★ Post-Battle Report ★
+      </div>
+
+      {/* Prestige round badge — visible directly under the title */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '0.5rem',
+        padding: '4px 14px',
+        border: `1px solid ${GOLD_DIM}`,
+        background: 'rgba(201,168,76,0.08)',
+      }}>
+        <span style={{ color: GOLD_DIM, fontSize: '0.6rem', letterSpacing: '0.18em', textTransform: 'uppercase' }}>
+          Prestige Round
+        </span>
+        <span style={{ color: GOLD, fontSize: '0.85rem', letterSpacing: '0.1em' }}>
+          {toRoman(prestigeRound)}
+        </span>
+        <span style={{ color: GOLD_DIM, fontSize: '0.6rem', letterSpacing: '0.06em' }}>
+          — Cleared
+        </span>
+      </div>
+
+      <p style={{ color: GRAY, fontSize: '0.62rem', letterSpacing: '0.14em', margin: 0, textTransform: 'uppercase' }}>
+        Current Round Statistics
+      </p>
+
+      {/* Player columns */}
+      <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+        {capped.map(p => {
+          const isMvp = p.userId === mvpId && capped.length > 1;
+          const isMe  = p.userId === myUserId;
+          return (
+            <div key={p.userId} style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem',
+              padding: '1.2rem 1.4rem',
+              background: isMvp ? 'rgba(201,168,76,0.1)' : isMe ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.03)',
+              border: `1px solid ${isMvp ? GOLD : isMe ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.08)'}`,
+              borderRadius: 2,
+              minWidth: 160,
+              boxShadow: isMvp ? `0 0 18px rgba(201,168,76,0.25)` : 'none',
+              position: 'relative',
+            }}>
+              {isMvp && (
+                <div style={{
+                  position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
+                  background: GOLD, color: BG, fontSize: '0.55rem', letterSpacing: '0.12em',
+                  padding: '2px 8px', fontFamily: F, textTransform: 'uppercase', fontWeight: 'bold',
+                }}>
+                  MVP
+                </div>
+              )}
+              <div style={{ fontSize: '1.6rem' }}>{HERO_INFO[p.heroClass as import('../types/gameTypes').HeroClass]?.icon ?? '?'}</div>
+              <div style={{ fontSize: '0.72rem', color: isMe ? GOLD : WHITE, letterSpacing: '0.1em', maxWidth: 130, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {p.username}{isMe ? ' (you)' : ''}
+              </div>
+              <div style={{ width: '100%', height: 1, background: 'rgba(255,255,255,0.08)', margin: '0.2rem 0' }} />
+              <StatRow label="DMG"    value={p.damageDealt.toLocaleString()} color={isMvp ? GOLD : WHITE} />
+              <StatRow label="KILLS"  value={String(p.killCount)}  color={WHITE} />
+              <StatRow label="DEATHS" value={String(p.deathCount)} color={p.deathCount === 0 ? '#27ae60' : RED} />
+              <StatRow label="GOLD"   value={`✦ ${p.gold}`}        color={GOLD} />
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Action buttons */}
+      <div style={{ display: 'flex', gap: '0.75rem' }}>
+        <button onClick={onContinue} style={{
+          background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.22)',
+          color: WHITE, fontFamily: F, fontSize: '0.72rem',
+          letterSpacing: '0.12em', textTransform: 'uppercase',
+          padding: '0.6rem 1.4rem', cursor: 'pointer',
+        }}>
+          Explore Hall
+        </button>
+        <button onClick={onLeave} style={{
+          background: 'rgba(201,168,76,0.12)', border: `1px solid ${GOLD}`,
+          color: GOLD, fontFamily: F, fontSize: '0.72rem',
+          letterSpacing: '0.15em', textTransform: 'uppercase',
+          padding: '0.6rem 1.8rem', cursor: 'pointer',
+        }}>
+          Return Home
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StatRow({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', gap: '1rem' }}>
+      <span style={{ fontSize: '0.6rem', color: GRAY, letterSpacing: '0.1em' }}>{label}</span>
+      <span style={{ fontSize: '0.7rem', color, letterSpacing: '0.06em' }}>{value}</span>
     </div>
   );
 }

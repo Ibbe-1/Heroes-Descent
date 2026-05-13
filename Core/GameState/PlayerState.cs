@@ -28,8 +28,12 @@ public class PlayerState
     public float Y { get; set; }
 
     // Accumulated gold coins for this run — earned from enemy kills and treasure chests.
-    // Persists across rooms within a session; will be spent at the shop when that is added.
     public int Gold { get; set; } = 0;
+
+    // Per-run combat statistics reset to zero at session start.
+    public int DamageDealt { get; set; } = 0;
+    public int KillCount   { get; set; } = 0;
+    public int DeathCount  { get; set; } = 0;
 
     public PlayerState(string userId, string username, string connectionId, Hero hero,
         float x = 480f, float y = 320f)

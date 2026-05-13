@@ -60,7 +60,7 @@ export interface EnemyState {
 }
 
 export interface RoomState {
-  type: 'Normal' | 'Elite' | 'Boss' | 'TreasureChest';
+  type: 'Normal' | 'Elite' | 'Boss' | 'TreasureChest' | 'ExitHall';
   enemies: EnemyState[];
   isCleared: boolean;
   chestGold: number;       // gold inside the chest; 0 for non-TreasureChest rooms
@@ -96,6 +96,11 @@ export interface PlayerState {
 
   gold: number;
   chestClaimed: boolean;  // true once this player has claimed their gold from the current chest
+
+  // Per-run statistics for the post-battle report (current prestige round only).
+  damageDealt: number;
+  killCount: number;
+  deathCount: number;
 }
 
 // The full game state sent to all clients after every significant event.
@@ -110,4 +115,5 @@ export interface GameState {
   isVictory: boolean;
   activeProjectiles: ActiveProjectile[];  // fireballs currently in flight (empty most ticks)
   activeFlameWaves:  FlameWave[];         // Dark Mage flame wave volleys (empty most ticks)
+  prestigeRound: number;                  // which prestige cycle this run belongs to (starts at 1)
 }

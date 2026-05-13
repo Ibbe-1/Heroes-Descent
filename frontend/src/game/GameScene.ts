@@ -116,12 +116,16 @@ export class GameScene extends Phaser.Scene {
   private currentAnimKey = '';
   private aimGraphics!:  Phaser.GameObjects.Graphics;
 
-  private kW!:     Phaser.Input.Keyboard.Key;
-  private kA!:     Phaser.Input.Keyboard.Key;
-  private kS!:     Phaser.Input.Keyboard.Key;
-  private kD!:     Phaser.Input.Keyboard.Key;
-  private kSpace!: Phaser.Input.Keyboard.Key;
-  private kQ!:     Phaser.Input.Keyboard.Key;
+  // ── Keyboard bindings ─────────────────────────────────────────────────────
+  // Registered in create() via kb.addKey().
+  // Every key is also passed to kb.addCapture() so the browser never intercepts
+  // it (e.g. SPACE scrolling the page, W/S moving the scrollbar).
+  private kW!:     Phaser.Input.Keyboard.Key;  // W     — move player UP
+  private kA!:     Phaser.Input.Keyboard.Key;  // A     — move player LEFT
+  private kS!:     Phaser.Input.Keyboard.Key;  // S     — move player DOWN
+  private kD!:     Phaser.Input.Keyboard.Key;  // D     — move player RIGHT
+  private kSpace!: Phaser.Input.Keyboard.Key;  // SPACE — basic attack aimed at the mouse cursor
+  private kQ!:     Phaser.Input.Keyboard.Key;  // Q     — class ability (Warrior: Undying Rage | Wizard: Fireball | Archer: Multi-Shot)
 
   private roomDecorations: Phaser.GameObjects.GameObject[] = [];
   // Active hazard zones for the current room — checked every move() tick.
@@ -145,6 +149,13 @@ export class GameScene extends Phaser.Scene {
     this.load.image('bg-demonic-summoning-room',  '/assets/BackgroundAssets/DemonicSummoningRoom.png');
     this.load.image('bg-boss-room',               '/assets/BackgroundAssets/BossRoom.png');
     this.load.image('bg-exit-hall',               '/assets/BackgroundAssets/ExitHall.png');
+
+    // Shop NPCs — sprite sheets displayed in the Exit Hall after the boss is defeated.
+    // Measured dimensions: Blacksmith 672×96 (7×96 frames), Alchemist 768×96 (8×96 frames),
+    // Enchanter 1024×96 (8×128 frames — wider scene with bookshelf + cauldron).
+    this.load.spritesheet('shop-blacksmith', '/assets/Shop/Blacksmith/BLACKSMITH.png', { frameWidth: 96,  frameHeight: 96 });
+    this.load.spritesheet('shop-enchanter',  '/assets/Shop/Enchanter/ENCHANTER.png',   { frameWidth: 128, frameHeight: 96 });
+    this.load.spritesheet('shop-alchemist',  '/assets/Shop/Alchemist/ALCHEMIST.png',   { frameWidth: 96,  frameHeight: 96 });
 
     // Warrior — 140×140 frames
     this.load.spritesheet('warrior-idle',     '/assets/Warrior/Idle.png',     { frameWidth: 140, frameHeight: 140 });
@@ -268,6 +279,7 @@ export class GameScene extends Phaser.Scene {
     this.createMimicAnims();
     this.createMadKingAnims();
     this.createChestAnims();
+    this.createShopAnims();
 
     this.hpBars      = this.add.graphics().setDepth(20);
     this.aimGraphics = this.add.graphics().setDepth(6);
@@ -286,23 +298,29 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, this.levelWidth, this.levelHeight);
 
     const kb = this.input.keyboard!;
-    // W / A / S / D — move the player up, left, down, right
-    this.kW     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.W);  // move up
-    this.kA     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.A);  // move left
-    this.kS     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);  // move down
-    this.kD     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.D);  // move right
-    this.kSpace = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE); // basic attack toward mouse cursor
-    this.kQ     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q);    // class ability (Warrior: Undying Rage, Wizard: Fireball, Archer: Multi-Shot)
 
-    // Stop the browser from intercepting these keys.
-    // Without this, pressing W/S would scroll the page and Space would jump to the bottom.
+    // ── Register keys ───────────────────────────────────────────────────────
+    // addKey() creates a Key object that tracks up/down/just-pressed state each frame.
+    this.kW     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.W);     // W     — move UP
+    this.kA     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.A);     // A     — move LEFT
+    this.kS     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.S);     // S     — move DOWN
+    this.kD     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.D);     // D     — move RIGHT
+    this.kSpace = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE); // SPACE — basic attack toward mouse cursor
+    this.kQ     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.Q);     // Q     — class ability
+
+    // ── Capture keys from the browser ───────────────────────────────────────
+    // Without capture, the browser handles these keys before Phaser does:
+    //   W / S  → scroll the page up/down
+    //   SPACE  → jump the page scroll to the bottom
+    //   Q      → no browser default, but captured for consistency
+    // addCapture() stops that default behaviour so only Phaser receives them.
     kb.addCapture([
-      Phaser.Input.Keyboard.KeyCodes.W,
-      Phaser.Input.Keyboard.KeyCodes.A,
-      Phaser.Input.Keyboard.KeyCodes.S,
-      Phaser.Input.Keyboard.KeyCodes.D,
-      Phaser.Input.Keyboard.KeyCodes.SPACE,
-      Phaser.Input.Keyboard.KeyCodes.Q,
+      Phaser.Input.Keyboard.KeyCodes.W,      // captured — browser would scroll up
+      Phaser.Input.Keyboard.KeyCodes.A,      // captured — no browser default, safe
+      Phaser.Input.Keyboard.KeyCodes.S,      // captured — browser would scroll down
+      Phaser.Input.Keyboard.KeyCodes.D,      // captured — no browser default, safe
+      Phaser.Input.Keyboard.KeyCodes.SPACE,  // captured — browser would scroll to bottom
+      Phaser.Input.Keyboard.KeyCodes.Q,      // captured — no browser default, safe
     ]);
 
     this.game.events.on('setEngine',    (e: GameEngine) => { this.engine = e; });
@@ -561,24 +579,34 @@ export class GameScene extends Phaser.Scene {
   private handleInput() {
     if (!this.engine || !this.state || !this.myHeroClass) return;
 
+    // ── SPACE — Basic attack ────────────────────────────────────────────────
+    // JustDown fires once per key-press (not while held), preventing attack spam.
+    // The direction vector (nx, ny) points from the player toward the mouse cursor
+    // so the attack always goes where the player is aiming.
+    //   Warrior  → cone melee hit (attackNearest); direction used for the flash VFX only
+    //   Archer   → directional arrow ray-cast (attackDirectional)
+    //   Wizard   → directional magic bolt ray-cast (attackDirectional)
     if (Phaser.Input.Keyboard.JustDown(this.kSpace)) {
       const me = this.state.players.find(p => p.userId === this.myUserId);
-      const cooldownMs = me?.attackCooldownMs ?? 2000;
+      const cooldownMs = me?.attackCooldownMs ?? 2000; // per-hero cooldown from server
       const now = Date.now();
-      if (now - this.lastAttackTime < cooldownMs) return;
+      if (now - this.lastAttackTime < cooldownMs) return; // still on cooldown — ignore
 
       const ptr = this.input.activePointer;
       const dx = ptr.worldX - this.localX;
       const dy = ptr.worldY - this.localY;
       const dist = Math.sqrt(dx * dx + dy * dy);
+      // Normalise to a unit direction vector; default to "up" if cursor is on the player.
       const nx = dist > 0 ? dx / dist : 0;
       const ny = dist > 0 ? dy / dist : -1;
 
       if (this.myHeroClass === 'Warrior') {
+        // Warrior uses nearest-enemy melee — direction only drives the swing VFX.
         this.lastAttackTime = now;
         this.engine.attackNearest();
         this.flashAttack(nx, ny, ATTACK_RANGE);
       } else if (dist > 0) {
+        // Archer / Wizard fire a directional skillshot along the mouse aim line.
         const maxRange = CLASS_RANGE[this.myHeroClass] ?? ATTACK_RANGE;
         this.lastAttackTime = now;
         this.engine.attackDirectional(nx, ny);
@@ -586,13 +614,20 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    // ── Q — Class ability ───────────────────────────────────────────────────
+    // Each hero class has a unique ability triggered by Q:
+    //   Warrior  → Undying Rage   — become untargetable for 5 s (no aim needed)
+    //   Wizard   → Fireball       — aimed single-target blast with area splash
+    //   Archer   → Multi-Shot     — fires 3 arrows in a ±15° spread from the aim direction
+    // canUseAbility is checked server-side too; the client check just avoids a wasted round-trip.
     if (Phaser.Input.Keyboard.JustDown(this.kQ)) {
       const me = this.state.players.find(p => p.userId === this.myUserId);
-      if (!me?.canUseAbility) return;
+      if (!me?.canUseAbility) return; // ability not ready (resource too low or on cooldown)
       const ptr = this.input.activePointer;
       const dx = ptr.worldX - this.localX;
       const dy = ptr.worldY - this.localY;
       const dist = Math.sqrt(dx * dx + dy * dy);
+      // Aim direction sent with the ability; ignored server-side for Warrior.
       const nx = dist > 0 ? dx / dist : 0;
       const ny = dist > 0 ? dy / dist : -1;
       this.engine.useAbility(nx, ny);
@@ -612,6 +647,7 @@ export class GameScene extends Phaser.Scene {
       this.clearRoomVisuals();
       this.renderBackground(this.backgroundKeyForRoom(s.currentRoomIndex, s.currentRoom.type));
       this.showRoomBanner(s.currentRoomIndex, s.currentRoom.type);
+      if (s.currentRoom.type === 'ExitHall') this.spawnShopNpcs();
       this.prevPlayerHp.clear();
       const me = s.players.find(p => p.userId === this.myUserId);
       if (me) { this.localX = me.x; this.localY = me.y; }
@@ -1203,6 +1239,100 @@ export class GameScene extends Phaser.Scene {
     const key = pool[this.regularRoomCount % pool.length];
     this.regularRoomCount++;
     return key;
+  }
+
+  // ── Shop NPC configuration ────────────────────────────────────────────────
+  //
+  // ExitHall layout (camera bounds: 1280 × 900 px):
+  //   Central carpet  x ≈ 490–790, full height → keep NPCs clear of this band
+  //   Left open floor x ≈ 60–460  (Phaser torch pillar at x=100)
+  //   Right open floor x ≈ 820–1220 (Phaser torch pillar at x=1180)
+  //   Bottom torches at (100,820), (640,820), (1180,820) → NPCs sit at y ≤ 730
+  //
+  // Scale 1.5 → 96 px frame renders at 144 px tall, matching player-character height.
+  //
+  // Each entry is the single source of truth for that NPC's animation and position.
+  // To add future interaction, key/animKey are the only identifiers needed downstream.
+  private static readonly SHOP_NPC_CONFIGS = [
+    {
+      key:        'shop-blacksmith',
+      animKey:    'shop-blacksmith-idle',
+      frameCount: 7,
+      frameRate:  8,    // hammering cadence — slightly snappier
+      x:          265,  // left clear floor, well clear of x=100 torch pillar
+      y:          685,  // between mid-left torch (y=450) and bottom-left torch (y=820)
+      label:      'Blacksmith',
+      subtitle:   'Weapons & Armor',
+    },
+    {
+      key:        'shop-enchanter',
+      animKey:    'shop-enchanter-idle',
+      frameCount: 8,
+      frameRate:  6,    // slow magical stirring
+      x:          640,  // carpet centre — thematically fits the enchanter
+      y:          740,  // below carpet diamond, above bottom-centre torch (y=820)
+      label:      'Enchanter',
+      subtitle:   'Magic & Spells',
+    },
+    {
+      key:        'shop-alchemist',
+      animKey:    'shop-alchemist-idle',
+      frameCount: 8,
+      frameRate:  6,    // slow potion-mixing
+      x:          1015, // right clear floor, well clear of x=1180 torch pillar
+      y:          685,  // mirrors Blacksmith vertically
+      label:      'Alchemist',
+      subtitle:   'Potions & Brews',
+    },
+  ] as const;
+
+  // Registers one looping idle animation per shop NPC.
+  // Called once in create(); guarded by anims.exists() so hot-reload is safe.
+  private createShopAnims() {
+    for (const cfg of GameScene.SHOP_NPC_CONFIGS) {
+      if (this.anims.exists(cfg.animKey)) continue;
+      this.anims.create({
+        key:       cfg.animKey,
+        frames:    this.anims.generateFrameNumbers(cfg.key, { start: 0, end: cfg.frameCount - 1 }),
+        frameRate: cfg.frameRate,
+        repeat:    -1,
+      });
+    }
+  }
+
+  // Spawns one animated sprite + two text labels per shop NPC into the Exit Hall.
+  // All objects are pushed into roomDecorations so clearRoomVisuals() destroys them
+  // automatically on room change — no duplicates are ever created.
+  private spawnShopNpcs() {
+    // 96 px native frame × 0.75 → 72 px on screen.
+    // Smaller than player characters (~100–144 px), appropriate for stationary stall NPCs.
+    // roundPixels is set on the global renderer (GamePage.tsx) so no extra step needed here.
+    const SCALE  = 0.75;
+    const HALF_H = 96 * SCALE / 2;   // 36 px — used to place labels above sprite top
+
+    for (const cfg of GameScene.SHOP_NPC_CONFIGS) {
+      const sprite = this.add.sprite(cfg.x, cfg.y, cfg.key, 0)
+        .setDepth(5)
+        .setScale(SCALE);
+      sprite.play(cfg.animKey);
+
+      // labelY pins to just above the rendered sprite top with a small gap.
+      const labelY = cfg.y - HALF_H - 10;
+
+      const name = this.add.text(cfg.x, labelY, cfg.label, {
+        fontFamily: 'Courier New',
+        fontSize:   '11px',
+        color:      '#c9a84c',
+      }).setOrigin(0.5, 1).setDepth(6);
+
+      const sub = this.add.text(cfg.x, labelY + 2, cfg.subtitle, {
+        fontFamily: 'Courier New',
+        fontSize:   '8px',
+        color:      'rgba(255,255,255,0.38)',
+      }).setOrigin(0.5, 0).setDepth(6);
+
+      this.roomDecorations.push(sprite, name, sub);
+    }
   }
 
   private renderBackground(bgKey: string) {
