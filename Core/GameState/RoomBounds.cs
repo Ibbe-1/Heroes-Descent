@@ -69,6 +69,9 @@ public static class RoomBounds
     public const float GolemLaserRange = 500f; // maximum beam length in pixels
     public const float GolemLaserWidth = 80f;  // half-width of the hit corridor (±80 px off center)
 
+    // Mad King (ChestGuardian) — how long isAttacking stays true after a melee hit
+    public const float MadKingAttackVisualMs = 400f;
+
     // Dark Mage flame wave constants
     // Volleys rotate through three patterns every BossFlameWaveCooldownMs milliseconds:
     //   Pattern 0 — horizontal sweep : 3 vertical bands at FlameWaveYPositions, sweep L/R

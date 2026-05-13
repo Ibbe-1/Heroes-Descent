@@ -65,6 +65,17 @@ public class EnemyInstance
     public float GolemLaserDirX { get; set; } = 1f;
     public float GolemLaserDirY { get; set; } = 0f;
 
+    // ── Mad King (ChestGuardian) attack state ─────────────────────────────────
+    // Only meaningful when Enemy is ChestGuardian; ignored for all other types.
+
+    // Set to the current time when the Mad King lands a melee hit; null otherwise.
+    // BuildDto keeps IsAttacking true for MadKingAttackVisualMs so the frontend
+    // has enough time to start the animation.
+    public DateTime? MadKingAttackFiredTime { get; set; } = null;
+
+    // Cycles 1 → 2 → 3 → 1 … so the frontend plays a different animation each hit.
+    public int MadKingAttackIndex { get; set; } = 1;
+
     public EnemyInstance(Enemy enemy, float x = 480f, float y = 320f)
     {
         Enemy = enemy;
