@@ -56,9 +56,9 @@ public static class RoomBounds
 
     // Golem laser charge thresholds and timing
     // The Golem charges its laser once each time HP crosses 75 %, 50 %, and 25 %.
-    // During the 2 s wind-up it freezes in place and gains bonus defence;
+    // During the 1 s wind-up it freezes in place and gains bonus defence;
     // when it fires the laser it damages ALL alive players and defence resets.
-    public const float GolemChargeDurationMs    = 2000f; // 2 s charge before the laser fires
+    public const float GolemChargeDurationMs    = 1000f; // 1 s charge before the laser fires
     public const int   GolemLaserDefenseBonus   = 15;    // extra defence during wind-up
     public const float GolemLaserFiringVisualMs = 700f;  // how long isLaserFiring stays true after the shot
     public const float GolemLaserDamageMultiplier = 2.5f; // laser hits harder than a normal attack
