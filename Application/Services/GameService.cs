@@ -75,10 +75,8 @@ public class GameService
 
         if (player.Hero is Warrior warrior)
         {
-            // Warrior: sets the IsBlocking flag. The next enemy hit that lands
-            // on this warrior is halved, then the flag is cleared (TickEnemyAttacks).
             warrior.UseAbility();
-            log.Add($"{player.Username} raises Shield Block — next hit halved!");
+            log.Add($"{player.Username} enters Undying Rage — untargetable for 5 seconds!");
         }
         else if (player.Hero is Wizard wizard)
         {
@@ -609,19 +607,18 @@ public class GameService
     }
 
     // Applies raw damage from any source to a target player.
-    // Handles the Warrior's Shield Block (halves the hit and clears the flag).
+    // Handles the Warrior's Undying Rage (skips the hit entirely while active).
     // Removes dead players from the alive list and sets IsGameOver if the party wipes.
     private static List<string> ApplyHit(
         int rawDmg, string attackerName, PlayerState target, GameSession session, List<PlayerState> alive)
     {
         var log = new List<string>();
 
-        // Warrior Shield Block halves the incoming damage — works against fireballs too.
-        if (target.Hero is Warrior w && w.IsBlocking)
+        // Warrior Undying Rage makes them immune to all damage for 5 seconds.
+        if (target.Hero is Warrior w && w.IsUntargetable)
         {
-            rawDmg /= 2;
-            w.ClearBlock();
-            log.Add($"{target.Username} blocks! Hit reduced to {rawDmg}.");
+            log.Add($"{target.Username} is in Undying Rage — immune!");
+            return log;
         }
 
         var actual = target.Hero.TakeDamage(rawDmg);
