@@ -47,10 +47,12 @@ public class GameService
 
         var raw    = player.Hero.BasicAttack();   // hero subclass rolls crits, adds Strength, etc.
         var actual = nearest.Enemy.TakeDamage(raw);
+        player.DamageDealt += actual;
         var log    = new List<string> { $"{player.Username} hits {nearest.Enemy.Name} for {actual} dmg!" };
 
         if (!nearest.Enemy.IsAlive)
         {
+            player.KillCount++;
             int gold = nearest.Enemy.GoldReward;
             player.Gold += gold;
             log.Add($"{nearest.Enemy.Name} is defeated! (+{gold}g)");
@@ -100,9 +102,11 @@ public class GameService
             {
                 int wizardGold = 0;
                 var actual = primary.Enemy.TakeDamage(dmg);
+                player.DamageDealt += actual;
                 log.Add($"Fireball strikes {primary.Enemy.Name} for {actual} magic dmg!");
                 if (!primary.Enemy.IsAlive)
                 {
+                    player.KillCount++;
                     log.Add($"{primary.Enemy.Name} is incinerated!");
                     player.Hero.GainExperience(primary.Enemy.ExperienceReward);
                     wizardGold += primary.Enemy.GoldReward;
@@ -113,9 +117,11 @@ public class GameService
                 {
                     if (Dist(primary.X, primary.Y, e.X, e.Y) > RoomBounds.WizardSplashRadius) continue;
                     var splashActual = e.Enemy.TakeDamage(splashDmg);
+                    player.DamageDealt += splashActual;
                     log.Add($"Splash burns {e.Enemy.Name} for {splashActual} magic dmg!");
                     if (!e.Enemy.IsAlive)
                     {
+                        player.KillCount++;
                         log.Add($"{e.Enemy.Name} is incinerated!");
                         player.Hero.GainExperience(e.Enemy.ExperienceReward);
                         wizardGold += e.Enemy.GoldReward;
@@ -162,9 +168,11 @@ public class GameService
                 var raw    = archer.BasicAttack();
                 bool isCrit = raw == archer.BaseAttack * 2;
                 var actual  = target.Enemy.TakeDamage(raw);
+                player.DamageDealt += actual;
                 log.Add($"Arrow pierces {target.Enemy.Name} for {actual} dmg{(isCrit ? " [CRIT!]" : "")}");
                 if (!target.Enemy.IsAlive)
                 {
+                    player.KillCount++;
                     log.Add($"{target.Enemy.Name} is defeated!");
                     player.Hero.GainExperience(target.Enemy.ExperienceReward);
                     archerGold += target.Enemy.GoldReward;
@@ -232,10 +240,12 @@ public class GameService
         var log    = new List<string>();
         var raw    = player.Hero.BasicAttack();
         var actual = target.Enemy.TakeDamage(raw);
+        player.DamageDealt += actual;
         log.Add($"{player.Username} hits {target.Enemy.Name} for {actual} dmg!");
 
         if (!target.Enemy.IsAlive)
         {
+            player.KillCount++;
             int gold = target.Enemy.GoldReward;
             player.Gold += gold;
             log.Add($"{target.Enemy.Name} is defeated! (+{gold}g)");
@@ -667,6 +677,7 @@ public class GameService
 
         if (!target.Hero.IsAlive)
         {
+            target.DeathCount++;
             log.Add($"{target.Username} has fallen!");
             alive.Remove(target);  // don't hit a corpse again this tick
             if (!alive.Any())
@@ -905,7 +916,8 @@ public class GameService
                 AttackCooldownMs(p.Hero),
                 p.X, p.Y,
                 p.Gold,
-                room.HasClaimed(p.UserId)
+                room.HasClaimed(p.UserId),
+                p.DamageDealt, p.KillCount, p.DeathCount
             );
         }).ToList();
 
@@ -927,7 +939,8 @@ public class GameService
             session.IsGameOver,
             session.IsVictory,
             activeProjectiles,
-            activeFlameWaves
+            activeFlameWaves,
+            session.PrestigeRound
         );
     }
 

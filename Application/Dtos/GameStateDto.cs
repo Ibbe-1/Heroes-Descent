@@ -34,7 +34,8 @@ public record GameStateDto(
     bool IsGameOver,
     bool IsVictory,
     List<ActiveProjectileDto> ActiveProjectiles,  // fireballs currently in flight (empty most ticks)
-    List<FlameWaveDto>        ActiveFlameWaves    // Dark Mage flame wave volleys (empty most ticks)
+    List<FlameWaveDto>        ActiveFlameWaves,   // Dark Mage flame wave volleys (empty most ticks)
+    int  PrestigeRound                            // which prestige cycle this run belongs to (starts at 1)
 );
 
 // Describes the room the party is currently in.
@@ -92,5 +93,8 @@ public record PlayerDto(
     float  X,
     float  Y,
     int    Gold,
-    bool   ChestClaimed     // true once this player has claimed their gold from the current chest
+    bool   ChestClaimed,    // true once this player has claimed their gold from the current chest
+    int    DamageDealt,
+    int    KillCount,
+    int    DeathCount
 );
