@@ -235,6 +235,21 @@ public class GameHub : Hub
             await Clients.Group(sessionId).SendAsync("GameStateUpdate", dto);
     }
 
+    // ── Prestige ──────────────────────────────────────────────────────────────
+
+    // Called when a player clicks "Delve Deeper" after a victory.
+    // Resets the session into the next prestige run with scaled enemies
+    // and broadcasts the fresh state to every player in the group.
+    public async Task DelveDeeper(string sessionId)
+    {
+        var session = _sessions.TryDelveDeeper(sessionId);
+        if (session is null) return;
+
+        Application.Dtos.GameStateDto dto;
+        lock (session.Lock) dto = _game.BuildDto(session);
+        await Clients.Group(sessionId).SendAsync("GameStateUpdate", dto);
+    }
+
     // ── Chest interaction ─────────────────────────────────────────────────────
 
     // Called when a player clicks the treasure chest sprite.
