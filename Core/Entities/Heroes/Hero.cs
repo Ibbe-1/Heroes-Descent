@@ -63,6 +63,9 @@ public abstract class Hero
     //   Archer   → number of targets hit (game engine applies BasicAttack to each)
     public abstract int UseAbility();
 
+    // Restores HP to full and resets any class resources. Override in subclasses.
+    public virtual void FullRestore() => Heal(MaxHp);
+
     // Awards XP and triggers a level-up if the threshold is reached.
     public void GainExperience(int xp)
     {

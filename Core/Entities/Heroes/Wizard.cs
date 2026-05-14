@@ -59,6 +59,12 @@ public class Wizard : Hero
     public void RestoreMana(int amount) =>
         CurrentMana = Math.Min(MaxMana, CurrentMana + amount);
 
+    public override void FullRestore()
+    {
+        base.FullRestore();
+        CurrentMana = MaxMana;
+    }
+
     // On level-up, Wizard gains HP, Intellect (which auto-grows MaxMana), and a mana refill.
     protected override void OnLevelUp()
     {

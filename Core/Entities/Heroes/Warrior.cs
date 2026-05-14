@@ -82,6 +82,14 @@ public class Warrior : Hero
         return 0;
     }
 
+    public override void FullRestore()
+    {
+        base.FullRestore();
+        CurrentRage = 0;
+        _undyingRageExpiry         = null;
+        _undyingRageCooldownExpiry = null;
+    }
+
     // On level-up, Warrior gains HP, Strength, and Defense.
     protected override void OnLevelUp()
     {

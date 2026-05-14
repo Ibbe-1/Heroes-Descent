@@ -79,6 +79,12 @@ public class Archer : Hero
         return 3;
     }
 
+    public override void FullRestore()
+    {
+        base.FullRestore();
+        CurrentEnergy = MaxEnergy;
+    }
+
     // On level-up, Archer gains HP, BaseAttack, and Dexterity.
     // Speed is recalculated after Dexterity grows so it reflects the new value.
     protected override void OnLevelUp()

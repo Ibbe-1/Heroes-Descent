@@ -91,6 +91,11 @@ export class GameEngine {
     this.connection.invoke('MoveToNextRoom', this._sessionId).catch(() => {});
   }
 
+  // Starts the next prestige run — resets the dungeon with scaled enemies and full player restore.
+  delveDeeper(): void {
+    this.connection.invoke('DelveDeeper', this._sessionId).catch(() => {});
+  }
+
   // Locks the chest for this player (opens the loot window on the server side).
   interactChest(): void {
     this.connection.invoke('InteractChest', this._sessionId).catch(() => {});

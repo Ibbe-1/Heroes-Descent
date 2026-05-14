@@ -248,7 +248,19 @@ export default function GamePage({ username, userId, onBack }: Props) {
               </>
             )}
           </span>
-          <span style={{ color: GRAY }}>Code: <span style={{ color: WHITE }}>{sessionCode}</span></span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {(state?.prestigeRound ?? 1) > 1 && (
+              <span style={{
+                background: 'rgba(201,168,76,0.18)', border: `1px solid ${GOLD}`,
+                color: GOLD, fontSize: 10, letterSpacing: '0.14em',
+                padding: '2px 8px', textTransform: 'uppercase',
+                boxShadow: '0 0 8px rgba(201,168,76,0.3)',
+              }}>
+                ▼ PRESTIGE {toRoman(state!.prestigeRound)}
+              </span>
+            )}
+            <span style={{ color: GRAY }}>Code: <span style={{ color: WHITE }}>{sessionCode}</span></span>
+          </span>
           <button onClick={handleLeave} style={{ background: 'transparent', border: 'none', color: GRAY, fontFamily: F, fontSize: 10, cursor: 'pointer' }}>[Leave]</button>
         </div>
 
@@ -261,8 +273,41 @@ export default function GamePage({ username, userId, onBack }: Props) {
               myUserId={userId}
               prestigeRound={state?.prestigeRound ?? 1}
               onContinue={() => setShowVictoryOverlay(false)}
+              onDelveDeeper={() => engineRef.current?.delveDeeper()}
               onLeave={handleLeave}
             />
+          )}
+          {isWin && !showVictoryOverlay && (
+            <div style={{
+              position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)',
+              display: 'flex', gap: '0.75rem', zIndex: 40,
+            }}>
+              <button onClick={() => engineRef.current?.delveDeeper()} style={{
+                background: 'rgba(201,168,76,0.22)', border: `2px solid ${GOLD}`,
+                color: GOLD, fontFamily: F, fontSize: '0.72rem',
+                letterSpacing: '0.14em', textTransform: 'uppercase',
+                padding: '0.55rem 1.6rem', cursor: 'pointer',
+                boxShadow: `0 0 12px rgba(201,168,76,0.3)`,
+              }}>
+                ▼ Delve Deeper
+              </button>
+              <button onClick={() => setShowVictoryOverlay(true)} style={{
+                background: 'rgba(0,0,0,0.82)', border: `1px solid ${GOLD}`,
+                color: GOLD, fontFamily: F, fontSize: '0.72rem',
+                letterSpacing: '0.12em', textTransform: 'uppercase',
+                padding: '0.55rem 1.4rem', cursor: 'pointer',
+              }}>
+                ← Battle Stats
+              </button>
+              <button onClick={handleLeave} style={{
+                background: 'rgba(0,0,0,0.82)', border: '1px solid rgba(255,255,255,0.3)',
+                color: WHITE, fontFamily: F, fontSize: '0.72rem',
+                letterSpacing: '0.12em', textTransform: 'uppercase',
+                padding: '0.55rem 1.4rem', cursor: 'pointer',
+              }}>
+                Return Home
+              </button>
+            </div>
           )}
         </div>
 
@@ -470,7 +515,6 @@ export default function GamePage({ username, userId, onBack }: Props) {
                   <button onClick={handleLeave} style={advBtn(RED)}>Return Home</button>
                 </div>
               )}
-              {isWin && !showVictoryOverlay && <button onClick={() => setShowVictoryOverlay(true)} style={advBtn(GOLD)}>★ Battle Report</button>}
               {!isWin && !isOver && cleared && (
                 <button
                   onClick={() => engineRef.current?.moveToNextRoom()}
@@ -669,8 +713,9 @@ interface VictoryStatsProps {
   players:       import('../types/gameTypes').PlayerState[];
   myUserId:      string;
   prestigeRound: number;
-  onContinue:    () => void;
-  onLeave:       () => void;
+  onContinue:     () => void;
+  onDelveDeeper:  () => void;
+  onLeave:        () => void;
 }
 
 // Converts 1–39 to Roman numerals for the prestige round badge.
@@ -685,7 +730,7 @@ function toRoman(n: number): string {
   return result || String(n);
 }
 
-function VictoryStatsOverlay({ players, myUserId, prestigeRound, onContinue, onLeave }: VictoryStatsProps) {
+function VictoryStatsOverlay({ players, myUserId, prestigeRound, onContinue, onDelveDeeper, onLeave }: VictoryStatsProps) {
   const capped = players.slice(0, 3);
 
   // MVP = highest damage dealt; ties broken by kill count
@@ -770,14 +815,23 @@ function VictoryStatsOverlay({ players, myUserId, prestigeRound, onContinue, onL
       </div>
 
       {/* Action buttons */}
-      <div style={{ display: 'flex', gap: '0.75rem' }}>
+      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+        <button onClick={onDelveDeeper} style={{
+          background: 'rgba(201,168,76,0.18)', border: `2px solid ${GOLD}`,
+          color: GOLD, fontFamily: F, fontSize: '0.78rem',
+          letterSpacing: '0.14em', textTransform: 'uppercase',
+          padding: '0.65rem 1.8rem', cursor: 'pointer',
+          boxShadow: `0 0 14px rgba(201,168,76,0.35)`,
+        }}>
+          ▼ Delve Deeper
+        </button>
         <button onClick={onContinue} style={{
           background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.22)',
           color: WHITE, fontFamily: F, fontSize: '0.72rem',
           letterSpacing: '0.12em', textTransform: 'uppercase',
           padding: '0.6rem 1.4rem', cursor: 'pointer',
         }}>
-          Explore Hall
+          Explore Shops
         </button>
         <button onClick={onLeave} style={{
           background: 'rgba(201,168,76,0.12)', border: `1px solid ${GOLD}`,

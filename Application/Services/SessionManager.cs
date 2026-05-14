@@ -64,6 +64,51 @@ public class SessionManager
         return true;
     }
 
+    // Resets an existing victorious session into the next prestige run.
+    // Increments PrestigeRound, regenerates rooms scaled to the new floor,
+    // and fully restores every player so they can fight at full strength.
+    public GameSession? TryDelveDeeper(string sessionId)
+    {
+        if (!_sessions.TryGetValue(sessionId, out var session)) return null;
+
+        lock (session.Lock)
+        {
+            if (!session.IsVictory) return null;
+
+            session.PrestigeRound++;
+            var newRooms = _generator.Generate(floorNumber: session.PrestigeRound);
+
+            session.Rooms.Clear();
+            session.Rooms.AddRange(newRooms);
+
+            session.CurrentRoomIndex = 0;
+            session.IsVictory  = false;
+            session.IsGameOver = false;
+            session.ActiveFlameWaves.Clear();
+            session.ActiveProjectiles.Clear();
+            session.LastAttackTime.Clear();
+            session.LastEnemyTick = DateTime.UtcNow.AddSeconds(2);
+            session.RecentLog.Clear();
+
+            for (int i = 0; i < session.Players.Count; i++)
+            {
+                var p = session.Players[i];
+                var (sx, sy) = GameSession.GetSpawn(i);
+                p.X = sx;
+                p.Y = sy;
+                p.DamageDealt = 0;
+                p.KillCount   = 0;
+                p.DeathCount  = 0;
+                p.Hero.FullRestore();
+            }
+
+            session.AddLog($"» Prestige Round {session.PrestigeRound} — the dungeon deepens!");
+            session.AddLog($"» Room 1 of {session.Rooms.Count} — {session.Rooms[0].Type}");
+        }
+
+        return session;
+    }
+
     public GameSession? GetSession(string sessionId) =>
         _sessions.TryGetValue(sessionId, out var s) ? s : null;
 
