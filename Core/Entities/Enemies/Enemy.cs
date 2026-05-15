@@ -31,11 +31,12 @@ public abstract class Enemy
 
     public void ScaleForFloor(int floorBonus)
     {
-        MaxHealth += floorBonus * (MaxHealth / 5);
-        Health = MaxHealth;
-        Attack += floorBonus * 2;
-        Defense += floorBonus;
+        float mult = MathF.Pow(1.4f, floorBonus);
+        MaxHealth = (int)(MaxHealth * mult);
+        Health    = MaxHealth;
+        Attack    = Math.Max(Attack + 1, (int)(Attack * mult));
+        Defense   = (int)(Defense * mult);
         ExperienceReward += floorBonus * 10;
-        GoldReward       += floorBonus * 2;  // gold scales more slowly than XP — deeper floors shouldn't feel like infinite wealth
+        GoldReward       += floorBonus * 2;
     }
 }

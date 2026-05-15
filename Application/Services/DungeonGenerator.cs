@@ -9,11 +9,11 @@ namespace Heroes_Descent.Application.Services;
 public class DungeonGenerator
 {
     // Entry point — call this once per session to get the full room list.
-    // floorNumber scales enemy stats for future floor 2, floor 3 support.
+    // floorNumber is the prestige round (1 = first run, 2 = first prestige, etc.).
     public List<RoomState> Generate(int floorNumber = 1)
     {
-        // Pick a random room count between 5 and 8 (not including the boss room).
-        int normalCount = Random.Shared.Next(5, 9);
+        // Dungeon grows longer each prestige (up to 4 extra rooms, capped at 12 normal rooms).
+        int normalCount = Random.Shared.Next(5, 9) + Math.Min(floorNumber - 1, 4);
         var rooms = new List<RoomState>();
 
         for (int i = 0; i < normalCount; i++)
@@ -25,9 +25,14 @@ public class DungeonGenerator
                 continue;
             }
 
-            // Rooms after index 3 have a 50% chance to be upgraded to "Elite"
-            // (Golem-only encounter — harder than normal but before the boss room).
-            bool isElite = i >= 3 && Random.Shared.Next(100) < 50;
+            // Elite rooms appear earlier and more often at higher prestige:
+            //   Prestige 1: from index 3, 50% chance
+            //   Prestige 2: from index 2, 60% chance
+            //   Prestige 3: from index 1, 70% chance
+            //   Prestige 4+: from index 1, 75% chance (capped)
+            int eliteFromIndex = Math.Max(3 - (floorNumber - 1), 1);
+            int eliteChance    = Math.Min(50 + (floorNumber - 1) * 10, 75);
+            bool isElite = i >= eliteFromIndex && Random.Shared.Next(100) < eliteChance;
             rooms.Add(MakeRoom(i, isElite ? RoomType.Elite : RoomType.Normal, floorNumber));
         }
 
@@ -48,7 +53,9 @@ public class DungeonGenerator
             return new RoomState(index, type, [new EnemyInstance(new GolemEnemy(floor), gx, gy)]);
         }
 
-        int count   = Random.Shared.Next(1, 4);
+        int minCount = Math.Min(floor, 3);
+        int maxCount = Math.Min(2 + floor, 6);
+        int count    = Random.Shared.Next(minCount, maxCount + 1);
         var enemies = Enumerable.Range(0, count)
             .Select(_ => SpawnEnemy(floor))
             .ToList();
