@@ -105,7 +105,6 @@ export default function SettingsModal({ settings, onChange, onClose }: Props) {
                   <span className={styles.sliderValue}>{settings[key]}</span>
                 </div>
               ))}
-              <p className={styles.note}>* Audio playback not yet implemented.</p>
             </div>
           )}
 
