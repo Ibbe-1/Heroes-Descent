@@ -75,6 +75,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
   // and a separate useEffect forwards the state into the Phaser scene.
   const [gameState, setGameState]     = useState<GameState | null>(null);
   const [claimedChestOpen, setClaimedChestOpen] = useState(false);
+  const [openShopType, setOpenShopType] = useState<string | null>(null);
   // When isVictory first becomes true the overlay appears. "Continue Roaming"
   // dismisses it so players can explore the Exit Hall before leaving.
   const [showVictoryOverlay, setShowVictoryOverlay] = useState(true);
@@ -128,6 +129,9 @@ export default function GamePage({ username, userId, onBack }: Props) {
 
     // Fired by GameScene when a player who already claimed clicks the chest again.
     game.events.on('viewClaimedChest', () => setClaimedChestOpen(true));
+
+    // Fired by GameScene when a player clicks a shop NPC in the Exit Hall.
+    game.events.on('openShop', (type: string) => setOpenShopType(type));
 
     // Destroy the Phaser game when the component unmounts or phase changes away.
     // true = also remove the <canvas> element from the DOM.
@@ -623,6 +627,10 @@ export default function GamePage({ username, userId, onBack }: Props) {
             </div>
           </div>
         )}
+
+        {openShopType && (
+          <ShopOverlay shopType={openShopType} onClose={() => setOpenShopType(null)} />
+        )}
       </div>
     );
   }
@@ -840,6 +848,118 @@ function VictoryStatsOverlay({ players, myUserId, prestigeRound, onContinue, onD
           padding: '0.6rem 1.8rem', cursor: 'pointer',
         }}>
           Return Home
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── ShopOverlay ───────────────────────────────────────────────────────────────
+// Shown when a player clicks a shop NPC in the Exit Hall.
+// Items are placeholders — prices and purchase logic are not yet implemented.
+
+const SHOP_DATA: Record<string, { title: string; subtitle: string; icon: string; items: { name: string; desc: string; price: number }[] }> = {
+  blacksmith: {
+    title:    'Blacksmith',
+    subtitle: 'Weapons & Armor',
+    icon:     '⚒',
+    items: [
+      { name: 'Iron Sword',       desc: '+5 Attack',          price: 80  },
+      { name: 'Steel Shield',     desc: '+8 Defense',         price: 100 },
+      { name: 'Chain Mail',       desc: '+15 Max HP',         price: 120 },
+      { name: 'War Axe',          desc: '+10 Attack',         price: 160 },
+    ],
+  },
+  enchanter: {
+    title:    'Enchanter',
+    subtitle: 'Magic & Spells',
+    icon:     '✦',
+    items: [
+      { name: 'Arcane Scroll',    desc: '+10 Max Mana',       price: 70  },
+      { name: 'Spell Tome',       desc: '+3 Intellect',       price: 110 },
+      { name: 'Magic Ring',       desc: '+4 Attack (magic)',  price: 130 },
+      { name: 'Mana Crystal',     desc: 'Restore 50 Mana',    price: 60  },
+    ],
+  },
+  alchemist: {
+    title:    'Alchemist',
+    subtitle: 'Potions & Brews',
+    icon:     '⚗',
+    items: [
+      { name: 'Health Potion',    desc: 'Restore 40 HP',      price: 50  },
+      { name: 'Mana Potion',      desc: 'Restore 30 Mana',    price: 50  },
+      { name: 'Elixir of Might',  desc: '+2 Attack (run)',    price: 90  },
+      { name: 'Toughness Brew',   desc: '+5 Defense (run)',   price: 90  },
+    ],
+  },
+};
+
+function ShopOverlay({ shopType, onClose }: { shopType: string; onClose: () => void }) {
+  const shop = SHOP_DATA[shopType];
+  if (!shop) return null;
+
+  return (
+    <div style={{
+      position: 'absolute', inset: 0,
+      background: 'rgba(0,0,0,0.80)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 50, fontFamily: F,
+    }}>
+      <div style={{
+        background: BG, border: `1px solid ${GOLD_DIM}`,
+        borderRadius: 4, padding: '1.8rem', width: 340,
+      }}>
+        {/* Header */}
+        <div style={{ textAlign: 'center', marginBottom: '1.4rem' }}>
+          <div style={{ fontSize: '2rem', marginBottom: '0.3rem' }}>{shop.icon}</div>
+          <div style={{ color: GOLD, fontSize: 13, letterSpacing: '0.2em', textTransform: 'uppercase' }}>
+            {shop.title}
+          </div>
+          <div style={{ color: GRAY, fontSize: 9, letterSpacing: '0.12em', marginTop: 2 }}>
+            {shop.subtitle}
+          </div>
+        </div>
+
+        {/* Item list */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '1.4rem' }}>
+          {shop.items.map(item => (
+            <div key={item.name} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '0.6rem 0.8rem',
+              border: `1px solid rgba(255,255,255,0.08)`,
+              background: 'rgba(255,255,255,0.03)',
+              borderRadius: 3,
+            }}>
+              <div>
+                <div style={{ color: WHITE, fontSize: 11, letterSpacing: '0.06em' }}>{item.name}</div>
+                <div style={{ color: GRAY,  fontSize: 9,  letterSpacing: '0.06em', marginTop: 2 }}>{item.desc}</div>
+              </div>
+              <button style={{
+                background: 'rgba(201,168,76,0.12)', border: `1px solid ${GOLD_DIM}`,
+                color: GOLD, fontFamily: F, fontSize: 9,
+                letterSpacing: '0.1em', textTransform: 'uppercase',
+                padding: '4px 10px', cursor: 'not-allowed', opacity: 0.7,
+              }} disabled title="Coming soon">
+                ✦ {item.price}g
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ color: GRAY, fontSize: 8, letterSpacing: '0.1em', textAlign: 'center', marginBottom: '1rem' }}>
+          SHOP PURCHASES COMING SOON
+        </div>
+
+        <button
+          onClick={onClose}
+          style={{
+            width: '100%', background: 'transparent',
+            border: `1px solid ${GOLD_DIM}`, color: GOLD,
+            fontFamily: F, fontSize: 10, letterSpacing: '0.12em',
+            textTransform: 'uppercase', padding: '0.5rem', cursor: 'pointer',
+          }}
+        >
+          ✦ Close
         </button>
       </div>
     </div>

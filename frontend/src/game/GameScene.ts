@@ -1311,10 +1311,14 @@ export class GameScene extends Phaser.Scene {
     const HALF_H = 96 * SCALE / 2;   // 36 px — used to place labels above sprite top
 
     for (const cfg of GameScene.SHOP_NPC_CONFIGS) {
+      const shopType = cfg.key.replace('shop-', '') as string;
+
       const sprite = this.add.sprite(cfg.x, cfg.y, cfg.key, 0)
         .setDepth(5)
-        .setScale(SCALE);
+        .setScale(SCALE)
+        .setInteractive({ useHandCursor: true });
       sprite.play(cfg.animKey);
+      sprite.on('pointerdown', () => this.game.events.emit('openShop', shopType));
 
       // labelY pins to just above the rendered sprite top with a small gap.
       const labelY = cfg.y - HALF_H - 10;
@@ -1331,7 +1335,15 @@ export class GameScene extends Phaser.Scene {
         color:      'rgba(255,255,255,0.38)',
       }).setOrigin(0.5, 0).setDepth(6);
 
-      this.roomDecorations.push(sprite, name, sub);
+      const hint = this.add.text(cfg.x, cfg.y + HALF_H + 6, '▶ CLICK TO BROWSE', {
+        fontFamily: 'Courier New',
+        fontSize:   '7px',
+        color:      '#c9a84c',
+        stroke:     '#000000',
+        strokeThickness: 2,
+      }).setOrigin(0.5, 0).setDepth(6);
+
+      this.roomDecorations.push(sprite, name, sub, hint);
     }
   }
 
