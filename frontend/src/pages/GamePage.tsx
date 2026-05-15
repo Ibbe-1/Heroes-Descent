@@ -21,6 +21,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Phaser from 'phaser';
 import { GameScene } from '../game/GameScene';
+import { PreloadScene } from '../game/PreloadScene';
 import { GameEngine } from '../game/gameEngine';
 import type { GameState, HeroClass } from '../types/gameTypes';
 
@@ -99,7 +100,7 @@ export default function GamePage({ username, userId, onBack }: Props) {
     const config: Phaser.Types.Core.GameConfig = {
       type: Phaser.AUTO,
       backgroundColor: '#07070d',
-      scene: [GameScene],
+      scene: [PreloadScene, GameScene],
       parent: containerRef.current,
       scale: {
         mode: Phaser.Scale.FIT,

@@ -35,7 +35,7 @@ public class GameService
             DateTime.UtcNow - last < TimeSpan.FromMilliseconds(cooldown))
             return (false, []);   // still on cooldown — silently reject
 
-        var alive = session.CurrentRoom.Enemies.Where(e => e.Enemy.IsAlive).ToList();
+        var alive = GetTargetableEnemies(session);
         if (!alive.Any()) return (false, []);
 
         // MinBy uses Dist() to find the closest enemy in one LINQ pass.
@@ -73,7 +73,7 @@ public class GameService
         if (player is null || !player.Hero.IsAlive)   return (false, []);
         if (!player.Hero.CanUseAbility())              return (false, []);
 
-        var alive = session.CurrentRoom.Enemies.Where(e => e.Enemy.IsAlive).ToList();
+        var alive = GetTargetableEnemies(session);
         var log   = new List<string>();
 
         if (player.Hero is Warrior warrior)
@@ -220,7 +220,7 @@ public class GameService
         // Apply cooldown immediately so even a miss consumes the attack window.
         session.LastAttackTime[userId] = DateTime.UtcNow;
 
-        var alive = session.CurrentRoom.Enemies.Where(e => e.Enemy.IsAlive).ToList();
+        var alive = GetTargetableEnemies(session);
 
         EnemyInstance? target;
         if (player.Hero is Warrior)
@@ -285,6 +285,16 @@ public class GameService
     {
         if (!session.CurrentRoom.ReleaseChest(userId)) return (false, []);
         return (true, []);
+    }
+
+    // Returns alive enemies that can currently be targeted by players.
+    // The Dark Mage is excluded while any of its summoned skeletons are still alive,
+    // forcing players to kill the skeletons first.
+    private static List<EnemyInstance> GetTargetableEnemies(GameSession session)
+    {
+        var alive = session.CurrentRoom.Enemies.Where(e => e.Enemy.IsAlive);
+        bool skeletonsAlive = alive.Any(e => e.Enemy is Skeleton);
+        return (skeletonsAlive ? alive.Where(e => e.Enemy is not BossEnemy) : alive).ToList();
     }
 
     // Returns the closest enemy inside a cone (halfAngle radians either side of the aim direction).
@@ -865,6 +875,7 @@ public class GameService
         var room = session.CurrentRoom;
 
         var now = DateTime.UtcNow;
+        bool bossUntargetable = room.Enemies.Any(e => e.Enemy is Skeleton && e.Enemy.IsAlive);
         var roomDto = new RoomDto(
             room.Type.ToString(),
             room.Enemies.Select(e =>
@@ -890,6 +901,7 @@ public class GameService
                 }
                 bool isAttacking = e.MadKingAttackFiredTime.HasValue &&
                     (now - e.MadKingAttackFiredTime.Value).TotalMilliseconds < RoomBounds.MadKingAttackVisualMs;
+                bool isUntargetable = e.Enemy is BossEnemy && bossUntargetable;
 
                 return new EnemyDto(
                     e.Id.ToString(), e.Enemy.Name,
@@ -897,7 +909,8 @@ public class GameService
                     e.X, e.Y,
                     chargePercent, isLaserFiring,
                     laserDirX, laserDirY,
-                    isAttacking, e.MadKingAttackIndex
+                    isAttacking, e.MadKingAttackIndex,
+                    isUntargetable
                 );
             }).ToList(),
             room.IsCleared,

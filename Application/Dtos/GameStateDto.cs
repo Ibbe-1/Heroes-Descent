@@ -67,7 +67,8 @@ public record EnemyDto(
     float  LaserDirX,       // normalised beam direction set at charge start (0 for non-Golem)
     float  LaserDirY,       // the frontend rotates the beam sprite using atan2(LaserDirY, LaserDirX)
     bool   IsAttacking,     // true for ~400 ms after Mad King lands a melee hit
-    int    AttackIndex      // cycles 1–3 so the frontend plays a different animation each hit
+    int    AttackIndex,     // cycles 1–3 so the frontend plays a different animation each hit
+    bool   IsUntargetable   // true for Dark Mage while summoned skeletons are still alive
 );
 
 // One player in the session.
