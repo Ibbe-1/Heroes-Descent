@@ -57,6 +57,10 @@ export interface EnemyState {
   // Mad King (ChestGuardian) only — true for ~400 ms after a melee hit lands.
   isAttacking: boolean;
   attackIndex: number;  // cycles 1–3, selects which attack animation to play
+
+  // True for the Dark Mage while its summoned skeletons are still alive.
+  // The server blocks all damage to the boss in this state; the frontend dims the sprite.
+  isUntargetable: boolean;
 }
 
 export interface RoomState {
