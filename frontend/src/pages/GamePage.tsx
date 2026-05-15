@@ -88,6 +88,8 @@ export default function GamePage({ username, userId, onBack }: Props) {
   const engineRef       = useRef<GameEngine | null>(null);
   // Always holds the latest gameState so we can replay it after Phaser finishes loading.
   const latestStateRef  = useRef<GameState | null>(null);
+  // Stores whether to create or join a session — executed after assets finish loading.
+  const pendingActionRef = useRef<{ type: 'create' } | { type: 'join'; code: string } | null>(null);
 
   // Keep latestStateRef in sync with gameState on every render.
   latestStateRef.current = gameState;
@@ -113,6 +115,37 @@ export default function GamePage({ username, userId, onBack }: Props) {
 
     const game = new Phaser.Game(config);
     gameRef.current = game;
+
+    // PreloadScene emits 'assetsLoaded' once all sprites and audio are in the cache.
+    // Only then do we create/join the game session, so enemies never get a head start
+    // attacking players who are still on the loading screen.
+    game.events.once('assetsLoaded', async () => {
+      if (!gameRef.current) return; // player left during loading
+      const engine = engineRef.current!;
+      const action = pendingActionRef.current;
+      try {
+        let code: string;
+        if (action?.type === 'create') {
+          code = await engine.createSession(username, heroClass);
+        } else if (action?.type === 'join') {
+          const ok = await engine.joinSession(action.code, username, heroClass);
+          if (!ok) {
+            setJoinError('Session not found or full.');
+            setPhase('hero-select');
+            return;
+          }
+          code = action.code;
+        } else {
+          return;
+        }
+        pendingActionRef.current = null;
+        setSessionCode(code);
+        game.events.emit('startGame'); // tell PreloadScene to fade out and start GameScene
+      } catch (e) {
+        setConnectError(e instanceof Error ? e.message : 'Connection failed.');
+        setPhase('hero-select');
+      }
+    });
 
     // GameScene emits 'sceneReady' at the very end of create(), after registering
     // all its event listeners.  We wait for that signal so our emits are never
@@ -177,13 +210,14 @@ export default function GamePage({ username, userId, onBack }: Props) {
   }
 
   // Called when the player clicks "Create Dungeon".
+  // Only connects SignalR here — the actual session is created after assets load
+  // so enemies don't start attacking while the loading screen is still up.
   async function handleCreate() {
     setConnectError('');
     setPhase('connecting');
     try {
-      const engine = await startEngine();
-      const code = await engine.createSession(username, heroClass);
-      setSessionCode(code);
+      await startEngine();
+      pendingActionRef.current = { type: 'create' };
       setPhase('playing');
     } catch (e) {
       setConnectError(e instanceof Error ? e.message : 'Connection failed.');
@@ -198,10 +232,8 @@ export default function GamePage({ username, userId, onBack }: Props) {
     setJoinError(''); setConnectError('');
     setPhase('connecting');
     try {
-      const engine = await startEngine();
-      const ok = await engine.joinSession(code, username, heroClass);
-      if (!ok) { setJoinError('Session not found or full.'); setPhase('hero-select'); return; }
-      setSessionCode(code);
+      await startEngine();
+      pendingActionRef.current = { type: 'join', code };
       setPhase('playing');
     } catch (e) {
       setConnectError(e instanceof Error ? e.message : 'Connection failed.');

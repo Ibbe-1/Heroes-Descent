@@ -216,9 +216,14 @@ export class PreloadScene extends Phaser.Scene {
   }
 
   create() {
-    this.cameras.main.fadeOut(350, 7, 7, 13);
-    this.cameras.main.once('camerafadeoutcomplete', () => {
-      this.scene.start('GameScene');
+    // Tell React that assets are ready. React will create/join the game session
+    // and emit 'startGame' back once the server-side session exists.
+    this.game.events.emit('assetsLoaded');
+    this.game.events.once('startGame', () => {
+      this.cameras.main.fadeOut(350, 7, 7, 13);
+      this.cameras.main.once('camerafadeoutcomplete', () => {
+        this.scene.start('GameScene');
+      });
     });
   }
 }
