@@ -20,10 +20,11 @@ public class GolemEnemy : Enemy
     {
         Name          = "Golem";
         MovementSpeed = 40f;                          // slow and relentless
-        MaxHealth     = 180 + (floorNumber * 30);     // far more HP than regular enemies
+        float mult    = MathF.Pow(1.4f, floorNumber - 1);
+        MaxHealth     = (int)(210 * mult);
         Health        = MaxHealth;
-        Attack        = 18 + (floorNumber * 3);       // less damage than Dark Mage (28 + 5 per floor)
-        Defense       = 15 + floorNumber;             // high armour — chips away at players slowly
+        Attack        = (int)(21  * mult);
+        Defense       = (int)(16  * mult);
         ExperienceReward = 150 + (floorNumber * 30);
         GoldReward       = 40  + (floorNumber * 8);
     }

@@ -6,10 +6,11 @@ public class BossEnemy : Enemy
     {
         Name = "Dark Mage";
         MovementSpeed = 45f;
-        MaxHealth = 220 + (floorNumber * 35);
-        Health = MaxHealth;
-        Attack = 28 + (floorNumber * 5);
-        Defense = 8 + floorNumber;
+        float mult = MathF.Pow(1.4f, floorNumber - 1);
+        MaxHealth = (int)(255 * mult);
+        Health    = MaxHealth;
+        Attack    = (int)(33  * mult);
+        Defense   = (int)(9   * mult);
         ExperienceReward = 220 + (floorNumber * 50);
         GoldReward = 55 + (floorNumber * 12);
     }
