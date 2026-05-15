@@ -6,9 +6,9 @@
 
 // All settings the player can change from the Settings modal (⚙ button).
 export interface GameSettings {
-  masterVolume: number;   // 0–100, controls overall game audio (not wired up yet)
-  musicVolume: number;    // 0–100, controls background music (not wired up yet)
-  sfxVolume: number;      // 0–100, controls sound effects (not wired up yet)
+  masterVolume: number;   // 0–100, controls overall game audio
+  musicVolume: number;    // 0–100, controls background music
+  sfxVolume: number;      // 0–100, controls sound effects
   scanlines: boolean;     // toggles the CRT scanline CSS overlay on the home page
   showFps: boolean;       // placeholder — FPS counter not implemented yet
   keybinds: {

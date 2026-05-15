@@ -131,6 +131,14 @@ export class GameScene extends Phaser.Scene {
   // Active hazard zones for the current room — checked every move() tick.
   private currentHazards: HazardZone[] = [];
 
+  // ── Audio ─────────────────────────────────────────────────────────────────
+  private bgMusic: Phaser.Sound.BaseSound | null = null;
+  private masterVol = 0.8;
+  private musicVol  = 0.7;
+  private sfxVol    = 0.8;
+  private golemWalkTimer = 0;
+  private prevMeAlive    = true;
+
   constructor() { super({ key: 'GameScene' }); }
 
   // ── Phaser lifecycle: preload ──────────────────────────────────────────────
@@ -260,11 +268,62 @@ export class GameScene extends Phaser.Scene {
     this.load.spritesheet('madking-attack3',  '/assets/MadKing/Attack3.png',  { frameWidth: 160, frameHeight: 111 });
     this.load.spritesheet('madking-take-hit', '/assets/MadKing/Take Hit.png', { frameWidth: 160, frameHeight: 111 });
     this.load.spritesheet('madking-death',    '/assets/MadKing/Death.png',    { frameWidth: 160, frameHeight: 111 });
+
+    // Audio
+    this.load.audio('music-dungeon', '/assets/Audio/Main-Dungeon-Theme.ogg');
+    this.load.audio('music-shop',    '/assets/Audio/Music-Shop.ogg');
+    this.load.audio('music-victory', '/assets/Audio/Victory-track.ogg');
+    this.load.audio('music-lose',    '/assets/Audio/Losing-Track.ogg');
+    this.load.audio('sfx-rare-drop',       '/assets/Audio/Rare-Item-Drop.ogg');
+    this.load.audio('sfx-darkmage-attack', '/assets/Audio/Enemy-Sounds/DarkMage-Attack.ogg');
+    this.load.audio('sfx-golem-hit',       '/assets/Audio/Enemy-Sounds/Golem-Hit.ogg');
+    this.load.audio('sfx-golem-walk',      '/assets/Audio/Enemy-Sounds/Golem-Walk-Sound.ogg');
+    this.load.audio('sfx-golem-attack',    '/assets/Audio/Enemy-Sounds/Golem-Attack.ogg');
+    this.load.audio('sfx-golem-death',     '/assets/Audio/Enemy-Sounds/Golem-Death.ogg');
+    this.load.audio('sfx-bat-attack',      '/assets/Audio/Enemy-Sounds/Bat-Attack.wav');
+    this.load.audio('sfx-bat-death',       '/assets/Audio/Enemy-Sounds/Bat-Death.wav');
+    this.load.audio('sfx-skeleton-attack', '/assets/Audio/Enemy-Sounds/Skeleton-Attack.wav');
+    this.load.audio('sfx-skeleton-death',  '/assets/Audio/Enemy-Sounds/Skeleton-Death.wav');
+    this.load.audio('sfx-goblin-death',    '/assets/Audio/Enemy-Sounds/Goblin-death.ogg');
+    this.load.audio('sfx-slime-death',     '/assets/Audio/Enemy-Sounds/Slime-Death.wav');
+    this.load.audio('sfx-warrior-attack',  '/assets/Audio/Player-Sounds/Warrior-attack.wav');
+    this.load.audio('sfx-wizard-attack',   '/assets/Audio/Player-Sounds/Wizard-Attack.ogg');
+    this.load.audio('sfx-archer-attack',   '/assets/Audio/Player-Sounds/Archer-Attack.wav');
+    this.load.audio('sfx-mushroom-attack', '/assets/Audio/Enemy-Sounds/Mushroom-Attack.wav');
+    this.load.audio('sfx-mushroom-death',  '/assets/Audio/Enemy-Sounds/Mushroom-Death.wav');
+    this.load.audio('sfx-mimic-death',     '/assets/Audio/Enemy-Sounds/Mimic-Death.wav');
+    this.load.audio('sfx-madking-attack',  '/assets/Audio/Enemy-Sounds/Madking-Attack.wav');
+    this.load.audio('sfx-madking-death',   '/assets/Audio/Enemy-Sounds/Madking-Death.wav');
   }
 
   // ── Phaser lifecycle: create ───────────────────────────────────────────────
 
+  private loadVolumeSettings() {
+    try {
+      const raw = localStorage.getItem('hd_settings');
+      if (raw) {
+        const s = JSON.parse(raw);
+        this.masterVol = (s.masterVolume ?? 80) / 100;
+        this.musicVol  = (s.musicVolume  ?? 70) / 100;
+        this.sfxVol    = (s.sfxVolume    ?? 80) / 100;
+      }
+    } catch { /* ignore corrupt settings */ }
+  }
+
+  private playMusic(key: string) {
+    if (this.bgMusic && (this.bgMusic as Phaser.Sound.WebAudioSound).isPlaying && this.bgMusic.key === key) return;
+    this.bgMusic?.stop();
+    this.bgMusic?.destroy();
+    this.bgMusic = this.sound.add(key, { loop: true, volume: this.masterVol * this.musicVol });
+    (this.bgMusic as Phaser.Sound.WebAudioSound).play();
+  }
+
+  private playSfx(key: string) {
+    this.sound.play(key, { volume: this.masterVol * this.sfxVol });
+  }
+
   create() {
+    this.loadVolumeSettings();
     this.renderBackground('bg-entrance-hall');
     this.createWarriorAnims();
     this.createWizardAnims();
@@ -347,6 +406,8 @@ export class GameScene extends Phaser.Scene {
 
     // Tell GamePage that create() is done and all listeners are live.
     this.game.events.emit('sceneReady');
+
+    this.playMusic('music-dungeon');
   }
 
   // ── Animation setup ────────────────────────────────────────────────────────
@@ -647,7 +708,12 @@ export class GameScene extends Phaser.Scene {
       this.clearRoomVisuals();
       this.renderBackground(this.backgroundKeyForRoom(s.currentRoomIndex, s.currentRoom.type));
       this.showRoomBanner(s.currentRoomIndex, s.currentRoom.type);
-      if (s.currentRoom.type === 'ExitHall') this.spawnShopNpcs();
+      if (s.currentRoom.type === 'ExitHall') {
+        this.spawnShopNpcs();
+        this.playMusic('music-shop');
+      } else {
+        this.playMusic('music-dungeon');
+      }
       this.prevPlayerHp.clear();
       const me = s.players.find(p => p.userId === this.myUserId);
       if (me) { this.localX = me.x; this.localY = me.y; }
@@ -679,9 +745,15 @@ export class GameScene extends Phaser.Scene {
         if (this.currentAnimKey !== deathKey) {
           this.currentAnimKey = deathKey;
           this.mySprite.play(deathKey);
+          this.playMusic('music-lose');
         }
         this.mySprite.setAlpha(0.7);
       } else {
+        if (!this.prevMeAlive) {
+          // Respawned — resume appropriate background music.
+          const inShop = s.currentRoom.type === 'ExitHall';
+          this.playMusic(inShop ? 'music-shop' : 'music-dungeon');
+        }
         this.mySprite.setAlpha(1);
         if (this.prevMyHp > 0 && me.currentHp < this.prevMyHp && !LOCKED_ANIMS.has(this.currentAnimKey)) {
           this.currentAnimKey = hitKey;
@@ -694,7 +766,8 @@ export class GameScene extends Phaser.Scene {
           });
         }
       }
-      this.prevMyHp = me.currentHp;
+      this.prevMyHp    = me.currentHp;
+      this.prevMeAlive = me.isAlive;
     }
 
     // ── Other players ──
@@ -881,11 +954,13 @@ export class GameScene extends Phaser.Scene {
       if (e.name === 'Golem' && sp.sprite) {
         sp.animKey = 'golem-death';
         sp.sprite.play('golem-death');
+        this.playSfx('sfx-golem-death');
       }
 
       if (e.name === 'Dark Mage' && sp.sprite) {
         sp.animKey = 'boss-death';
         sp.sprite.play('boss-death');
+        this.playMusic('music-victory');
         sp.sprite.once('animationcomplete', () => {
           this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 500, onComplete: () => sp!.sprite?.setVisible(false) });
         });
@@ -893,6 +968,7 @@ export class GameScene extends Phaser.Scene {
       } else if (e.name === 'Bat' && sp.sprite) {
         sp.animKey = 'bat-fly-to-fall';
         sp.sprite.play('bat-fly-to-fall');
+        this.playSfx('sfx-bat-death');
         sp.sprite.once('animationcomplete', () => {
           sp!.animKey = 'bat-fall';
           sp!.sprite?.play('bat-fall');
@@ -904,6 +980,7 @@ export class GameScene extends Phaser.Scene {
       } else if (e.name === 'Slime' && sp.sprite) {
         sp.animKey = 'slime-death';
         sp.sprite.play('slime-death');
+        this.playSfx('sfx-slime-death');
         sp.sprite.once('animationcomplete', () => {
           this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 300, onComplete: () => sp!.sprite?.setVisible(false) });
         });
@@ -911,6 +988,7 @@ export class GameScene extends Phaser.Scene {
       } else if (e.name === 'Mimic' && sp.sprite) {
         sp.animKey = 'mimic-death';
         sp.sprite.play('mimic-death');
+        this.playSfx('sfx-mimic-death');
         sp.sprite.once('animationcomplete', () => {
           this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 300, onComplete: () => sp!.sprite?.setVisible(false) });
         });
@@ -918,12 +996,16 @@ export class GameScene extends Phaser.Scene {
       } else if (e.name === 'Mad King' && sp.sprite) {
         sp.animKey = 'madking-death';
         sp.sprite.play('madking-death');
+        this.playSfx('sfx-madking-death');
         sp.sprite.once('animationcomplete', () => {
           this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 500, onComplete: () => sp!.sprite?.setVisible(false) });
         });
 
       } else if (sp.sprite) {
         // Goblin / Skeleton / Mushroom: fade out (no dedicated death animation provided)
+        if (e.name === 'Goblin') this.playSfx('sfx-goblin-death');
+        else if (e.name === 'Skeleton') this.playSfx('sfx-skeleton-death');
+        else if (e.name === 'Mushroom') this.playSfx('sfx-mushroom-death');
         this.tweens.add({
           targets: sp.sprite, alpha: 0, duration: 400,
           onComplete: () => sp!.sprite?.setVisible(false),
@@ -998,6 +1080,7 @@ export class GameScene extends Phaser.Scene {
             beam.once('animationcomplete', () => beam.destroy());
             // Brief screen flash so players feel the laser impact.
             this.cameras.main.flash(200, 0, 200, 255, false);
+            this.playSfx('sfx-golem-attack');
           }
           sp.wasFiring = e.isLaserFiring;
         }
@@ -1013,6 +1096,7 @@ export class GameScene extends Phaser.Scene {
           if (e.health < sp.prevHp && !locked && !charging) {
             sp.animKey = hitKey;
             sp.sprite.play(hitKey);
+            this.playSfx('sfx-golem-hit');
             sp.sprite.once('animationcomplete', () => {
               if (sp!.animKey === hitKey) {
                 const moving = Math.abs(e.x - sp!.prevX) > 1 || Math.abs(e.y - sp!.prevY) > 1;
@@ -1024,6 +1108,16 @@ export class GameScene extends Phaser.Scene {
             const moving = Math.abs(e.x - sp.prevX) > 1 || Math.abs(e.y - sp.prevY) > 1;
             const want   = moving ? runKey : idleKey;
             if (sp.animKey !== want) { sp.animKey = want; sp.sprite.play(want); }
+            // Periodic walk sound while the Golem is moving.
+            if (moving) {
+              this.golemWalkTimer -= this.game.loop.delta;
+              if (this.golemWalkTimer <= 0) {
+                this.playSfx('sfx-golem-walk');
+                this.golemWalkTimer = 900;
+              }
+            } else {
+              this.golemWalkTimer = 0;
+            }
           }
 
         } else if (e.name === 'Dark Mage') {
@@ -1107,6 +1201,7 @@ export class GameScene extends Phaser.Scene {
           } else if (e.isAttacking && sp.animKey !== attackKey && !LOCKED_MK.has(sp.animKey)) {
             sp.animKey = attackKey;
             sp.sprite!.play(attackKey);
+            this.playSfx('sfx-madking-attack');
             sp.sprite!.once('animationcomplete', () => {
               if (sp!.animKey === attackKey) {
                 const nearestDist = Math.min(...players.map(p => Math.hypot(e.x - p.x, e.y - p.y)));
@@ -1431,6 +1526,7 @@ export class GameScene extends Phaser.Scene {
     if (this.myHeroClass === 'Warrior') {
       this.currentAnimKey = 'warrior-attack';
       this.mySprite.play('warrior-attack');
+      this.playSfx('sfx-warrior-attack');
       this.mySprite.once('animationcomplete', () => {
         if (this.currentAnimKey === 'warrior-attack') {
           const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
@@ -1451,6 +1547,7 @@ export class GameScene extends Phaser.Scene {
     } else if (this.myHeroClass === 'Archer') {
       this.currentAnimKey = 'archer-attack';
       this.mySprite.play('archer-attack');
+      this.playSfx('sfx-archer-attack');
       this.mySprite.once('animationcomplete', () => {
         if (this.currentAnimKey === 'archer-attack') {
           const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
@@ -1464,6 +1561,7 @@ export class GameScene extends Phaser.Scene {
     } else if (this.myHeroClass === 'Wizard') {
       this.currentAnimKey = 'wizard-attack1';
       this.mySprite.play('wizard-attack1');
+      this.playSfx('sfx-wizard-attack');
       this.mySprite.once('animationcomplete', () => {
         if (this.currentAnimKey === 'wizard-attack1') {
           const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
@@ -1512,6 +1610,7 @@ export class GameScene extends Phaser.Scene {
     } else if (this.myHeroClass === 'Archer') {
       this.currentAnimKey = 'archer-attack';
       this.mySprite.play('archer-attack');
+      this.playSfx('sfx-archer-attack');
       this.mySprite.once('animationcomplete', () => {
         if (this.currentAnimKey === 'archer-attack') {
           const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
@@ -1636,6 +1735,13 @@ export class GameScene extends Phaser.Scene {
     if (chestHasBeenOpened && !this.chestIsOpen) {
       this.chestIsOpen = true;
       body.play('chest-open');
+      this.bgMusic?.pause();
+      const rareDrop = this.sound.add('sfx-rare-drop', { volume: this.masterVol * this.sfxVol });
+      rareDrop.once('complete', () => {
+        this.bgMusic?.resume();
+        rareDrop.destroy();
+      });
+      (rareDrop as Phaser.Sound.WebAudioSound).play();
       this.tweens.add({
         targets: body, scaleX: 2.4, scaleY: 2.4, duration: 160,
         yoyo: true, onComplete: () => body.setScale(2),
@@ -1751,6 +1857,7 @@ export class GameScene extends Phaser.Scene {
           if (attackerSp.animKey !== atkKey && attackerSp.animKey !== (attackerName === 'Golem' ? 'golem-death' : 'boss-death')) {
             attackerSp.animKey = atkKey;
             attackerSp.sprite.play(atkKey);
+            if (attackerName === 'Dark Mage') this.playSfx('sfx-darkmage-attack');
             attackerSp.sprite.once('animationcomplete', () => {
               if (attackerSp!.animKey === atkKey) {
                 attackerSp!.animKey = idleKey;
@@ -1823,6 +1930,7 @@ export class GameScene extends Phaser.Scene {
       const existing = this.flameWaveGraphics.get(w.id);
 
       if (!existing) {
+        this.playSfx('sfx-darkmage-attack');
         const g = this.add.graphics().setDepth(13);
         const isVertical = Math.abs(w.dirY ?? 0) > 0.5;
 
@@ -1875,12 +1983,12 @@ export class GameScene extends Phaser.Scene {
   // Bat:      triggers the bat's attack animation on its sprite.
 
   private showEnemyAttacks(s: GameState) {
-    const skeletons = s.currentRoom.enemies.filter(e => e.name === 'Skeleton' && e.isAlive);
-    const goblins   = s.currentRoom.enemies.filter(e => e.name === 'Goblin'   && e.isAlive);
-    const bats      = s.currentRoom.enemies.filter(e => e.name === 'Bat'      && e.isAlive);
-    const slimes    = s.currentRoom.enemies.filter(e => e.name === 'Slime'    && e.isAlive);
-    const mushrooms = s.currentRoom.enemies.filter(e => e.name === 'Mushroom' && e.isAlive);
-    const mimics    = s.currentRoom.enemies.filter(e => e.name === 'Mimic'    && e.isAlive);
+    const skeletons = s.currentRoom.enemies.filter(e => e.name === 'Skeleton'  && e.isAlive);
+    const goblins   = s.currentRoom.enemies.filter(e => e.name === 'Goblin'    && e.isAlive);
+    const bats      = s.currentRoom.enemies.filter(e => e.name === 'Bat'       && e.isAlive);
+    const slimes    = s.currentRoom.enemies.filter(e => e.name === 'Slime'     && e.isAlive);
+    const mushrooms = s.currentRoom.enemies.filter(e => e.name === 'Mushroom'  && e.isAlive);
+    const mimics    = s.currentRoom.enemies.filter(e => e.name === 'Mimic'     && e.isAlive);
 
     for (const player of s.players) {
       const prevHp = this.prevPlayerHp.get(player.userId) ?? player.currentHp;
@@ -1906,6 +2014,7 @@ export class GameScene extends Phaser.Scene {
         if (skSp?.sprite && !skSp.dead && skSp.animKey !== 'skeleton-attack') {
           skSp.animKey = 'skeleton-attack';
           skSp.sprite.play('skeleton-attack');
+          this.playSfx('sfx-skeleton-attack');
           skSp.sprite.once('animationcomplete', () => {
             if (skSp.animKey === 'skeleton-attack') { skSp.animKey = ''; skSp.sprite?.setFrame(0); }
           });
@@ -1944,6 +2053,7 @@ export class GameScene extends Phaser.Scene {
         if (!LOCKED_BAT.has(batSp.animKey)) {
           batSp.animKey = 'bat-attack';
           batSp.sprite.play('bat-attack');
+          this.playSfx('sfx-bat-attack');
           batSp.sprite.once('animationcomplete', () => {
             if (batSp.animKey === 'bat-attack') { batSp.animKey = 'bat-fly'; batSp.sprite?.play('bat-fly'); }
           });
@@ -1981,6 +2091,7 @@ export class GameScene extends Phaser.Scene {
         if (muSp.animKey !== 'mushroom-attack') {
           muSp.animKey = 'mushroom-attack';
           muSp.sprite.play('mushroom-attack');
+          this.playSfx('sfx-mushroom-attack');
           muSp.sprite.once('animationcomplete', () => {
             if (muSp.animKey === 'mushroom-attack') { muSp.animKey = ''; muSp.sprite?.setFrame(0); }
           });
