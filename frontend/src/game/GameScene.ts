@@ -280,6 +280,20 @@ export class GameScene extends Phaser.Scene {
     this.load.audio('sfx-golem-walk',      '/assets/Audio/Enemy-Sounds/Golem-Walk-Sound.ogg');
     this.load.audio('sfx-golem-attack',    '/assets/Audio/Enemy-Sounds/Golem-Attack.ogg');
     this.load.audio('sfx-golem-death',     '/assets/Audio/Enemy-Sounds/Golem-Death.ogg');
+    this.load.audio('sfx-bat-attack',      '/assets/Audio/Enemy-Sounds/Bat-Attack.wav');
+    this.load.audio('sfx-bat-death',       '/assets/Audio/Enemy-Sounds/Bat-Death.wav');
+    this.load.audio('sfx-skeleton-attack', '/assets/Audio/Enemy-Sounds/Skeleton-Attack.wav');
+    this.load.audio('sfx-skeleton-death',  '/assets/Audio/Enemy-Sounds/Skeleton-Death.wav');
+    this.load.audio('sfx-goblin-death',    '/assets/Audio/Enemy-Sounds/Goblin-death.ogg');
+    this.load.audio('sfx-slime-death',     '/assets/Audio/Enemy-Sounds/Slime-Death.wav');
+    this.load.audio('sfx-warrior-attack',  '/assets/Audio/Player-Sounds/Warrior-attack.wav');
+    this.load.audio('sfx-wizard-attack',   '/assets/Audio/Player-Sounds/Wizard-Attack.ogg');
+    this.load.audio('sfx-archer-attack',   '/assets/Audio/Player-Sounds/Archer-Attack.wav');
+    this.load.audio('sfx-mushroom-attack', '/assets/Audio/Enemy-Sounds/Mushroom-Attack.wav');
+    this.load.audio('sfx-mushroom-death',  '/assets/Audio/Enemy-Sounds/Mushroom-Death.wav');
+    this.load.audio('sfx-mimic-death',     '/assets/Audio/Enemy-Sounds/Mimic-Death.wav');
+    this.load.audio('sfx-madking-attack',  '/assets/Audio/Enemy-Sounds/Madking-Attack.wav');
+    this.load.audio('sfx-madking-death',   '/assets/Audio/Enemy-Sounds/Madking-Death.wav');
   }
 
   // ── Phaser lifecycle: create ───────────────────────────────────────────────
@@ -954,6 +968,7 @@ export class GameScene extends Phaser.Scene {
       } else if (e.name === 'Bat' && sp.sprite) {
         sp.animKey = 'bat-fly-to-fall';
         sp.sprite.play('bat-fly-to-fall');
+        this.playSfx('sfx-bat-death');
         sp.sprite.once('animationcomplete', () => {
           sp!.animKey = 'bat-fall';
           sp!.sprite?.play('bat-fall');
@@ -965,6 +980,7 @@ export class GameScene extends Phaser.Scene {
       } else if (e.name === 'Slime' && sp.sprite) {
         sp.animKey = 'slime-death';
         sp.sprite.play('slime-death');
+        this.playSfx('sfx-slime-death');
         sp.sprite.once('animationcomplete', () => {
           this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 300, onComplete: () => sp!.sprite?.setVisible(false) });
         });
@@ -972,6 +988,7 @@ export class GameScene extends Phaser.Scene {
       } else if (e.name === 'Mimic' && sp.sprite) {
         sp.animKey = 'mimic-death';
         sp.sprite.play('mimic-death');
+        this.playSfx('sfx-mimic-death');
         sp.sprite.once('animationcomplete', () => {
           this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 300, onComplete: () => sp!.sprite?.setVisible(false) });
         });
@@ -979,12 +996,16 @@ export class GameScene extends Phaser.Scene {
       } else if (e.name === 'Mad King' && sp.sprite) {
         sp.animKey = 'madking-death';
         sp.sprite.play('madking-death');
+        this.playSfx('sfx-madking-death');
         sp.sprite.once('animationcomplete', () => {
           this.tweens.add({ targets: sp!.sprite, alpha: 0, duration: 500, onComplete: () => sp!.sprite?.setVisible(false) });
         });
 
       } else if (sp.sprite) {
         // Goblin / Skeleton / Mushroom: fade out (no dedicated death animation provided)
+        if (e.name === 'Goblin') this.playSfx('sfx-goblin-death');
+        else if (e.name === 'Skeleton') this.playSfx('sfx-skeleton-death');
+        else if (e.name === 'Mushroom') this.playSfx('sfx-mushroom-death');
         this.tweens.add({
           targets: sp.sprite, alpha: 0, duration: 400,
           onComplete: () => sp!.sprite?.setVisible(false),
@@ -1180,6 +1201,7 @@ export class GameScene extends Phaser.Scene {
           } else if (e.isAttacking && sp.animKey !== attackKey && !LOCKED_MK.has(sp.animKey)) {
             sp.animKey = attackKey;
             sp.sprite!.play(attackKey);
+            this.playSfx('sfx-madking-attack');
             sp.sprite!.once('animationcomplete', () => {
               if (sp!.animKey === attackKey) {
                 const nearestDist = Math.min(...players.map(p => Math.hypot(e.x - p.x, e.y - p.y)));
@@ -1492,6 +1514,7 @@ export class GameScene extends Phaser.Scene {
     if (this.myHeroClass === 'Warrior') {
       this.currentAnimKey = 'warrior-attack';
       this.mySprite.play('warrior-attack');
+      this.playSfx('sfx-warrior-attack');
       this.mySprite.once('animationcomplete', () => {
         if (this.currentAnimKey === 'warrior-attack') {
           const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
@@ -1512,6 +1535,7 @@ export class GameScene extends Phaser.Scene {
     } else if (this.myHeroClass === 'Archer') {
       this.currentAnimKey = 'archer-attack';
       this.mySprite.play('archer-attack');
+      this.playSfx('sfx-archer-attack');
       this.mySprite.once('animationcomplete', () => {
         if (this.currentAnimKey === 'archer-attack') {
           const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
@@ -1525,6 +1549,7 @@ export class GameScene extends Phaser.Scene {
     } else if (this.myHeroClass === 'Wizard') {
       this.currentAnimKey = 'wizard-attack1';
       this.mySprite.play('wizard-attack1');
+      this.playSfx('sfx-wizard-attack');
       this.mySprite.once('animationcomplete', () => {
         if (this.currentAnimKey === 'wizard-attack1') {
           const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
@@ -1573,6 +1598,7 @@ export class GameScene extends Phaser.Scene {
     } else if (this.myHeroClass === 'Archer') {
       this.currentAnimKey = 'archer-attack';
       this.mySprite.play('archer-attack');
+      this.playSfx('sfx-archer-attack');
       this.mySprite.once('animationcomplete', () => {
         if (this.currentAnimKey === 'archer-attack') {
           const moving = this.kW.isDown || this.kS.isDown || this.kA.isDown || this.kD.isDown;
@@ -1697,7 +1723,13 @@ export class GameScene extends Phaser.Scene {
     if (chestHasBeenOpened && !this.chestIsOpen) {
       this.chestIsOpen = true;
       body.play('chest-open');
-      this.playSfx('sfx-rare-drop');
+      this.bgMusic?.pause();
+      const rareDrop = this.sound.add('sfx-rare-drop', { volume: this.masterVol * this.sfxVol });
+      rareDrop.once('complete', () => {
+        this.bgMusic?.resume();
+        rareDrop.destroy();
+      });
+      (rareDrop as Phaser.Sound.WebAudioSound).play();
       this.tweens.add({
         targets: body, scaleX: 2.4, scaleY: 2.4, duration: 160,
         yoyo: true, onComplete: () => body.setScale(2),
@@ -1970,6 +2002,7 @@ export class GameScene extends Phaser.Scene {
         if (skSp?.sprite && !skSp.dead && skSp.animKey !== 'skeleton-attack') {
           skSp.animKey = 'skeleton-attack';
           skSp.sprite.play('skeleton-attack');
+          this.playSfx('sfx-skeleton-attack');
           skSp.sprite.once('animationcomplete', () => {
             if (skSp.animKey === 'skeleton-attack') { skSp.animKey = ''; skSp.sprite?.setFrame(0); }
           });
@@ -2008,6 +2041,7 @@ export class GameScene extends Phaser.Scene {
         if (!LOCKED_BAT.has(batSp.animKey)) {
           batSp.animKey = 'bat-attack';
           batSp.sprite.play('bat-attack');
+          this.playSfx('sfx-bat-attack');
           batSp.sprite.once('animationcomplete', () => {
             if (batSp.animKey === 'bat-attack') { batSp.animKey = 'bat-fly'; batSp.sprite?.play('bat-fly'); }
           });
@@ -2045,6 +2079,7 @@ export class GameScene extends Phaser.Scene {
         if (muSp.animKey !== 'mushroom-attack') {
           muSp.animKey = 'mushroom-attack';
           muSp.sprite.play('mushroom-attack');
+          this.playSfx('sfx-mushroom-attack');
           muSp.sprite.once('animationcomplete', () => {
             if (muSp.animKey === 'mushroom-attack') { muSp.animKey = ''; muSp.sprite?.setFrame(0); }
           });
